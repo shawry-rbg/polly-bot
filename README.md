@@ -7,8 +7,6 @@ Meteora bundler to automate a Solana token launch with:
 
 This repository is designed for teams searching for a **Meteora launch bundler**, **Meteora Alpha Vault script**, **DAMM v2 launch bot**, or **Solana stealth bundler workflow**.
 
-**Support:** [oxylabsfive](https://t.me/oxylabs_five)
-
 ---
 
 ## Keywords (Search Intent)
