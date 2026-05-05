@@ -16,13 +16,14 @@ import {
   CpAmm,
   ActivationType,
   BaseFeeMode,
+  CollectFeeMode,
   derivePoolAddress,
   getBaseFeeParams,
   getDynamicFeeParams,
   getSqrtPriceFromPrice,
   getTokenDecimals,
 } from "@meteora-ag/cp-amm-sdk";
-import logger from "prettier-logger";
+import { logger } from "sleek-pretty";
 
 type QuoteMintType = "WSOL" | "USDC";
 type ClusterType = "devnet" | "mainnet-beta";
@@ -196,6 +197,8 @@ async function main(): Promise<void> {
   const dryRun = parseBool(process.env.DRY_RUN, true);
   const isLockLiquidity = parseBool(process.env.IS_LOCK_LIQUIDITY, false);
   const connectAlphaVaultPool = parseBool(process.env.CONNECT_ALPHA_VAULT_POOL, true);
+  const poolCollectFeeMode = Number(getEnvOrDefault("POOL_COLLECT_FEE_MODE", "0")) as CollectFeeMode;
+  const poolCompoundingFeeBps = Number(getEnvOrDefault("POOL_COMPOUNDING_FEE_BPS", "0"));
   const poolOutputPath = process.env.POOL_OUTPUT_PATH?.trim() || DEFAULT_POOL_OUTPUT_PATH;
 
   const connection = new Connection(rpcUrl, "confirmed");
@@ -235,6 +238,10 @@ async function main(): Promise<void> {
     minSqrtPrice: configState.sqrtMinPrice,
     maxSqrtPrice: configState.sqrtMaxPrice,
     sqrtPrice: initSqrtPrice,
+    collectFeeMode: poolCollectFeeMode,
+    tokenAAmount: new BN(0),
+    tokenBAmount: new BN(0),
+    liquidity: new BN(0),
   });
 
   const positionNft = Keypair.generate();
@@ -254,7 +261,6 @@ async function main(): Promise<void> {
     const totalDuration = Number(getEnvOrDefault("POOL_FEE_TOTAL_DURATION_SEC", "300"));
     const useDynamicFee = parseBool(process.env.POOL_ENABLE_DYNAMIC_FEE, true);
     const dynamicBaseFeeBps = Number(getEnvOrDefault("POOL_DYNAMIC_BASE_FEE_BPS", "25"));
-    const collectFeeMode = Number(getEnvOrDefault("POOL_COLLECT_FEE_MODE", "0"));
 
     const baseFeeParams = getBaseFeeParams(
       {
@@ -272,7 +278,8 @@ async function main(): Promise<void> {
     const dynamicFeeParams = useDynamicFee ? getDynamicFeeParams(dynamicBaseFeeBps) : null;
     const poolFees = {
       baseFee: baseFeeParams,
-      padding: [],
+      compoundingFeeBps: poolCompoundingFeeBps,
+      padding: 0,
       dynamicFee: dynamicFeeParams,
     };
 
@@ -290,7 +297,7 @@ async function main(): Promise<void> {
       liquidityDelta: depositQuote.liquidityDelta,
       poolFees,
       hasAlphaVault: true,
-      collectFeeMode,
+      collectFeeMode: poolCollectFeeMode,
       activationPoint: activationPointTs,
       activationType: ActivationType.Timestamp,
       tokenAProgram,

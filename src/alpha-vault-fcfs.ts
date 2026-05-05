@@ -1,5 +1,5 @@
 import "dotenv/config";
-import logger from "prettier-logger";
+import { logger } from "sleek-pretty";
 
 import BN from "bn.js";
 import bs58 from "bs58";

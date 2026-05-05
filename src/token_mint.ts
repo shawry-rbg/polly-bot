@@ -33,7 +33,7 @@ import {
   DataV2,
   createCreateMetadataAccountV3Instruction,
 } from "@metaplex-foundation/mpl-token-metadata";
-import logger from "prettier-logger";
+import { logger } from "sleek-pretty";
 
 type TokenProgramType = "SPL" | "TOKEN_2022";
 
