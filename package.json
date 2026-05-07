@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.0",
+    "axios": "^1.16.0",
+    "dotenv": "^17.4.2",
+    "ethers": "^6.16.0"
+  }
+}
