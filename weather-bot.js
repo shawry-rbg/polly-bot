@@ -13,33 +13,36 @@ const DRY_RUN = true;
 const SMART_WALLETS = [
   '0xd66a74a449AbcE9dCf7Ad7B5766D4FeBa026f89c', // huskyvs
 ];
-
 async function getMarketData(cityName) {
-  // Get tomorrow's date in the format "may-9-2026"
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-  const month = monthNames[tomorrow.getMonth()];
-  const day = tomorrow.getDate();
-  const year = tomorrow.getFullYear();
-  const dateStr = `${month}-${day}-${year}`;
-  const citySlug = cityName.toLowerCase().replace(/ /g, '-');
-  const slug = `highest-temperature-in-${citySlug}-on-${dateStr}`;
-  const url = `https://data-api.polymarket.com/markets?slug=${slug}`;
-  try {
-    const response = await axios.get(url);
-    const market = response.data[0]; // data-api returns an array
-    if (market && market.conditionId) {
-      console.log(`✅ Found market: ${market.title}`);
-      return { conditionId: market.conditionId, slug: market.slug };
-    } else {
-      console.log(`❌ No market found for ${cityName} on ${dateStr}`);
-      return null;
+  // Try tomorrow first, then today
+  const dates = [1, 0]; // 1 = tomorrow, 0 = today
+  for (const offset of dates) {
+    const date = new Date();
+    date.setDate(date.getDate() + offset);
+    const targetDate = date.toISOString().slice(0, 10); // YYYY-MM-DD
+    const url = `https://data-api.polymarket.com/markets?title=${encodeURIComponent(cityName)}&limit=10`;
+    try {
+      const response = await axios.get(url);
+      const markets = response.data;
+      // Find a market that contains the city name AND the target date in endDate
+      let market = markets.find(m =>
+        m.title?.toLowerCase().includes(cityName.toLowerCase()) &&
+        m.endDate?.startsWith(targetDate)
+      );
+      if (!market) {
+        // If no exact date match, take any market with the city name
+        market = markets.find(m => m.title?.toLowerCase().includes(cityName.toLowerCase()));
+      }
+      if (market && market.conditionId) {
+        console.log(`✅ Found market: ${market.title}`);
+        return { conditionId: market.conditionId, slug: market.slug };
+      }
+    } catch (error) {
+      console.error(`Error searching for ${cityName}: ${error.message}`);
     }
-  } catch (error) {
-    console.error(`Error fetching market data for ${cityName}: ${error.message}`);
-    return null;
   }
+  console.log(`❌ No market found for ${cityName} after trying today and tomorrow`);
+  return null;
 }
 // ---------- FULL CITIES LIST ----------
 const CITIES = [
