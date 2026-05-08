@@ -110,6 +110,7 @@ async function scanCity(city) {
     { temp: baseTemp + 1, yes: 0.20, no: 0.80 },
   ];
   for (const market of markets) {
+    await new Promise(r => setTimeout(r, 2000));
     const pred = await predict(city, weather, market);
     if (!pred) continue;
     if (pred.confidence < MIN_AI_CONFIDENCE) continue;
