@@ -14,31 +14,22 @@ const SMART_WALLETS = [
   '0xd66a74a449AbcE9dCf7Ad7B5766D4FeBa026f89c', // huskyvs
 ];
 
-// ---------- GET MARKET DATA – TODAY'S DATE + FALLBACK ----------
 async function getMarketData(cityName) {
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  const url = `https://gamma-api.polymarket.com/markets?title=${encodeURIComponent(cityName)}&limit=30`;
+  // Get tomorrow's date in YYYY-MM-DD format
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const targetDate = tomorrow.toISOString().slice(0, 10); // e.g., 2026-05-09
+  const citySlug = cityName.toLowerCase().replace(/ /g, '-');
+  const slug = `highest-temperature-in-${citySlug}-on-${targetDate}`;
+  const url = `https://data-api.polymarket.com/markets?slug=${slug}`;
   try {
     const response = await axios.get(url);
-    const markets = response.data;
-    // First try to match by title and endDate starting with today's date
-    let matched = markets.find(m =>
-      m.title?.toLowerCase().includes(cityName.toLowerCase()) &&
-      m.endDate?.startsWith(todayStr)
-    );
-    // If not found, match by title only (any date)
-    if (!matched) {
-      matched = markets.find(m =>
-        m.title?.toLowerCase().includes(cityName.toLowerCase())
-      );
-      if (matched) console.log(`⚠️ Using fallback market for ${cityName} (date: ${matched.endDate})`);
-    }
-    if (matched) {
-      console.log(`✅ Found market: ${matched.title}`);
-      return { conditionId: matched.conditionId, slug: matched.slug };
+    const market = response.data[0];
+    if (market && market.conditionId) {
+      console.log(`✅ Found market: ${market.title}`);
+      return { conditionId: market.conditionId, slug: market.slug };
     } else {
-      console.log(`❌ No market found for ${cityName}`);
+      console.log(`❌ No market found for ${cityName} on ${targetDate}`);
       return null;
     }
   } catch (error) {
@@ -46,7 +37,6 @@ async function getMarketData(cityName) {
     return null;
   }
 }
-
 async function checkSmartMoneySignal(conditionId) {
   if (!conditionId) return false;
   const url = `https://data-api.polymarket.com/positions?condition_id=${conditionId}&limit=10&sort_by=position_size&sort_direction=desc`;
