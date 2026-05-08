@@ -15,12 +15,17 @@ const SMART_WALLETS = [
 ];
 
 async function getMarketData(cityName) {
-  // Get tomorrow's date in YYYY-MM-DD format
+  // Get tomorrow's date and format as "may-9-2026"
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const targetDate = tomorrow.toISOString().slice(0, 10); // e.g., 2026-05-09
+  const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const month = monthNames[tomorrow.getMonth()];
+  const day = tomorrow.getDate();
+  const year = tomorrow.getFullYear();
+  const dateStr = `${month}-${day}-${year}`;
+  
   const citySlug = cityName.toLowerCase().replace(/ /g, '-');
-  const slug = `highest-temperature-in-${citySlug}-on-${targetDate}`;
+  const slug = `highest-temperature-in-${citySlug}-on-${dateStr}`;
   const url = `https://data-api.polymarket.com/markets?slug=${slug}`;
   try {
     const response = await axios.get(url);
@@ -29,7 +34,7 @@ async function getMarketData(cityName) {
       console.log(`✅ Found market: ${market.title}`);
       return { conditionId: market.conditionId, slug: market.slug };
     } else {
-      console.log(`❌ No market found for ${cityName} on ${targetDate}`);
+      console.log(`❌ No market found for ${cityName} on ${dateStr}`);
       return null;
     }
   } catch (error) {
