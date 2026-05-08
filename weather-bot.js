@@ -6,7 +6,30 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Health check running on port ${port}`));
 const KEY=process.env.GROQ_API_KEY;
 const MODEL='llama-3.1-8b-instant';
+// ========== SMART WALLETS (top weather traders) ==========
+const SMART_WALLETS = [
+  '0xd66a74a449AbcE9dCf7Ad7B5766D4FeBa026f89c', // huskyvs
+];
 
+// ========== CHECK IF SMART WALLET IS TOP HOLDER ==========
+async function checkSmartMoneySignal(conditionId) {
+  try {
+    const url = `https://data-api.polymarket.com/positions?condition_id=${conditionId}&limit=10&sort_by=position_size&sort_direction=desc`;
+    const response = await axios.get(url);
+    const topHolders = response.data.map(p => p.user_address.toLowerCase());
+    for (const wallet of SMART_WALLETS) {
+      if (topHolders.includes(wallet.toLowerCase())) {
+        console.log(`✅ Smart wallet ${wallet.slice(0,6)} found in top holders`);
+        return true;
+      }
+    }
+    console.log(`❌ No smart wallet in top holders`);
+    return false;
+  } catch (error) {
+    console.error(`Error checking smart wallets: ${error.message}`);
+    return false;
+  }
+}
 // All real cities from Polymarket temperature markets
 const CITIES=[
 {name:'Seoul',lat:37.57,lon:126.98,slug:'highest-temperature-in-seoul-on-may-8-2026'},
