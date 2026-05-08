@@ -15,30 +15,25 @@ const SMART_WALLETS = [
 ];
 
 async function getMarketData(cityName) {
-  // Use tomorrow's date for filtering (optional)
+  // Get tomorrow's date in the format "may-9-2026"
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const targetDate = tomorrow.toISOString().slice(0, 10); // e.g., 2026-05-09
-
-  // Search Gamma API by title (city name)
-  const url = `https://gamma-api.polymarket.com/markets?title=${encodeURIComponent(cityName)}&limit=5&active=true`;
+  const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const month = monthNames[tomorrow.getMonth()];
+  const day = tomorrow.getDate();
+  const year = tomorrow.getFullYear();
+  const dateStr = `${month}-${day}-${year}`;
+  const citySlug = cityName.toLowerCase().replace(/ /g, '-');
+  const slug = `highest-temperature-in-${citySlug}-on-${dateStr}`;
+  const url = `https://data-api.polymarket.com/markets?slug=${slug}`;
   try {
     const response = await axios.get(url);
-    const markets = response.data;
-    // Find a market that matches the city and tomorrow's date (fallback to any date)
-    let market = markets.find(m =>
-      m.title?.toLowerCase().includes(cityName.toLowerCase()) &&
-      m.endDate?.startsWith(targetDate)
-    );
-    if (!market) {
-      // If no exact date match, take the first market that contains the city name
-      market = markets.find(m => m.title?.toLowerCase().includes(cityName.toLowerCase()));
-    }
+    const market = response.data[0]; // data-api returns an array
     if (market && market.conditionId) {
       console.log(`✅ Found market: ${market.title}`);
       return { conditionId: market.conditionId, slug: market.slug };
     } else {
-      console.log(`❌ No market found for ${cityName}`);
+      console.log(`❌ No market found for ${cityName} on ${dateStr}`);
       return null;
     }
   } catch (error) {
@@ -46,26 +41,6 @@ async function getMarketData(cityName) {
     return null;
   }
 }
-async function checkSmartMoneySignal(conditionId) {
-  if (!conditionId) return false;
-  const url = `https://data-api.polymarket.com/positions?condition_id=${conditionId}&limit=10&sort_by=position_size&sort_direction=desc`;
-  try {
-    const res = await axios.get(url);
-    const topHolders = res.data.map(p => p.user_address.toLowerCase());
-    for (const wallet of SMART_WALLETS) {
-      if (topHolders.includes(wallet.toLowerCase())) {
-        console.log(`✅ Smart wallet ${wallet.slice(0,6)} in top holders`);
-        return true;
-      }
-    }
-    console.log(`❌ No smart wallet in top holders`);
-    return false;
-  } catch (err) {
-    console.error(`Smart money error: ${err.message}`);
-    return false;
-  }
-}
-
 // ---------- FULL CITIES LIST ----------
 const CITIES = [
   { name: 'Seoul', lat: 37.57, lon: 126.98 },
