@@ -11,16 +11,30 @@ const MIN_AI_CONFIDENCE = 70;
 const DRY_RUN = true;
 
 const SMART_WALLETS = [
-  '0xd66a74a449AbcE9dCf7Ad7B5766D4FeBa026f89c',
+  '0xd66a74a449AbcE9dCf7Ad7B5766D4FeBa026f89c', // huskyvs
 ];
 
-async function getConditionId(slug) {
-  const url = `https://data-api.polymarket.com/markets?slug=${slug}`;
+async function getMarketData(cityName, targetDate = '2026-05-09') {
+  const url = `https://gamma-api.polymarket.com/markets?title=${encodeURIComponent(cityName)}&limit=20`;
   try {
-    const res = await axios.get(url);
-    return res.data[0]?.conditionId || null;
-  } catch (err) {
-    console.error(`Error fetching conditionId: ${err.message}`);
+    const response = await axios.get(url);
+    const markets = response.data;
+    const matchedMarket = markets.find(market =>
+      market.title?.toLowerCase().includes(cityName.toLowerCase()) &&
+      market.endDate?.startsWith(targetDate)
+    );
+    if (matchedMarket) {
+      console.log(`✅ Found market: ${matchedMarket.title}`);
+      return {
+        conditionId: matchedMarket.conditionId,
+        slug: matchedMarket.slug,
+      };
+    } else {
+      console.log(`❌ No market found for ${cityName} on ${targetDate}`);
+      return null;
+    }
+  } catch (error) {
+    console.error(`Error fetching market data for ${cityName}: ${error.message}`);
     return null;
   }
 }
@@ -46,9 +60,8 @@ async function checkSmartMoneySignal(conditionId) {
 }
 
 const CITIES = [
-  { name: 'Seoul', lat: 37.57, lon: 126.98, slug: 'highest-temperature-in-seoul-on-may-8-2026' },
-  { name: 'Singapore', lat: 1.29, lon: 103.85, slug: 'highest-temperature-in-singapore-on-may-8-2026' },
-  // Add your other cities
+  { name: 'Seoul', lat: 37.57, lon: 126.98 },
+  { name: 'Singapore', lat: 1.29, lon: 103.85 },
 ];
 
 async function getWeather(lat, lon) {
@@ -64,7 +77,6 @@ async function getWeather(lat, lon) {
   }
 }
 
-// Deterministic predictor (no API key, no rate limits)
 function predict(city, weather, market) {
   const forecast = weather.maxC;
   const threshold = market.temp;
@@ -90,11 +102,11 @@ async function scanCity(city) {
     const pred = predict(city, weather, market);
     if (pred.confidence < MIN_AI_CONFIDENCE) continue;
 
-    const conditionId = await getConditionId(city.slug);
-    if (!conditionId) {
-      console.log(`⚠️ No conditionId for ${city.name}, skipping`);
-      continue;
-    }
+    const marketData = await getMarketData(city.name);
+    if (!marketData) continue;
+    const conditionId = marketData.conditionId;
+    const slug = marketData.slug;
+
     const smartOk = await checkSmartMoneySignal(conditionId);
     if (!smartOk) {
       console.log(`⚠️ Smart money disagrees – skip ${city.name}`);
@@ -114,7 +126,7 @@ async function scanCity(city) {
     console.log(`SIGNAL ${city.name} | ${market.temp}°C | ${pred.direction} ${pred.confidence}%`);
     console.log(`${shares}x @ ${(tp*100).toFixed(0)}c = $${cost.toFixed(2)} -> +$${profit.toFixed(2)}`);
     console.log(pred.reasoning);
-    console.log(`[DRY RUN] polymarket.com/event/${city.slug}`);
+    console.log(`[DRY RUN] polymarket.com/event/${slug}`);
     await new Promise(r => setTimeout(r, 1000));
   }
 }
@@ -139,8 +151,8 @@ function printStats() {
 }
 
 async function main() {
-  console.log('CERTova-X Weather Bot - Deterministic predictor (no Groq)');
-  console.log(`Cities: ${CITIES.length} | Smart wallet track | AEGIS ON`);
+  console.log('CERTova-X Weather Bot - Deterministic predictor + Smart Wallet track');
+  console.log(`Cities: ${CITIES.length} | Smart wallets: ${SMART_WALLETS.length} | AEGIS ON`);
   while (true) {
     await scan();
     printStats();
