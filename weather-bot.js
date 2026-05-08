@@ -119,7 +119,17 @@ for(const market of markets){
 const pred=await predict(city,weather,market);
 if(!pred)continue;
 if(pred.confidence<78)continue;
-
+// --- SMART MONEY CONFIRMATION ---
+const conditionId = await getConditionId(city.slug);
+if (!conditionId) {
+  console.log(`⚠️ Could not fetch conditionId for ${city.name}, skipping`);
+  continue;   // or `return` if inside a function
+}
+const smartOk = await checkSmartMoneySignal(conditionId);
+if (!smartOk) {
+  console.log(`⚠️ Smart money disagrees – skipping trade for ${city.name}`);
+  continue;
+}
 const tp=pred.direction==='YES'?market.yes:market.no;
 const shares=Math.min(Math.floor(25/tp),1000); // smaller trades with $25
 const cost=shares*tp;
