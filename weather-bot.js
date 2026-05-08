@@ -15,26 +15,30 @@ const SMART_WALLETS = [
 ];
 
 async function getMarketData(cityName) {
-  // Get tomorrow's date and format as "may-9-2026"
+  // Use tomorrow's date for filtering (optional)
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-  const month = monthNames[tomorrow.getMonth()];
-  const day = tomorrow.getDate();
-  const year = tomorrow.getFullYear();
-  const dateStr = `${month}-${day}-${year}`;
-  
-  const citySlug = cityName.toLowerCase().replace(/ /g, '-');
-  const slug = `highest-temperature-in-${citySlug}-on-${dateStr}`;
-  const url = `https://data-api.polymarket.com/markets?slug=${slug}`;
+  const targetDate = tomorrow.toISOString().slice(0, 10); // e.g., 2026-05-09
+
+  // Search Gamma API by title (city name)
+  const url = `https://gamma-api.polymarket.com/markets?title=${encodeURIComponent(cityName)}&limit=5&active=true`;
   try {
     const response = await axios.get(url);
-    const market = response.data[0];
+    const markets = response.data;
+    // Find a market that matches the city and tomorrow's date (fallback to any date)
+    let market = markets.find(m =>
+      m.title?.toLowerCase().includes(cityName.toLowerCase()) &&
+      m.endDate?.startsWith(targetDate)
+    );
+    if (!market) {
+      // If no exact date match, take the first market that contains the city name
+      market = markets.find(m => m.title?.toLowerCase().includes(cityName.toLowerCase()));
+    }
     if (market && market.conditionId) {
       console.log(`✅ Found market: ${market.title}`);
       return { conditionId: market.conditionId, slug: market.slug };
     } else {
-      console.log(`❌ No market found for ${cityName} on ${dateStr}`);
+      console.log(`❌ No market found for ${cityName}`);
       return null;
     }
   } catch (error) {
