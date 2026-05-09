@@ -28,16 +28,23 @@ function isModelRunFresh() {
 }
 
 async function getEnsembleForecast(lat, lon) {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&models=ecmwf_ifs&timezone=auto`;
-  try {
-    const res = await axios.get(url);
-    const maxTemp = res.data.daily.temperature_2m_max[1];
-    console.log(`[DEBUG] ECMWF forecast: ${maxTemp}°C`); // temporary debug
-    return { currentC: null, maxC: maxTemp, agreement: true };
-  } catch (err) {
-    console.error(`ECMWF forecast failed: ${err.message}`);
-    return null;
+  const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
+  const forecasts = [];
+  for (const model of models) {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&daily=temperature_2m_max&models=' + model + '&timezone=auto';
+    try {
+      const res = await axios.get(url, { timeout: 10000 });
+      const maxTemp = res.data.daily.temperature_2m_max[1];
+      forecasts.push(maxTemp);
+    } catch (err) {
+      console.error(`Model ${model} failed: ${err.message}`);
+    }
   }
+  if (forecasts.length === 0) return null;
+  const avg = forecasts.reduce((a,b) => a+b,0) / forecasts.length;
+  const maxDiff = Math.max(...forecasts) - Math.min(...forecasts);
+  const agreement = maxDiff <= 0.8;
+  return { currentC: null, maxC: avg, agreement };
 }
 async function getCurrentTemp(lat, lon) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
