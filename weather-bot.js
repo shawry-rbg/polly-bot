@@ -8,21 +8,31 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Health check running on port ${port}`));
 
 const DRY_RUN = true;                 // set false to trade real money
-const TRADE_AMOUNT_USD = 25;          // total capital per ladder (spread across buckets)
+const TRADE_AMOUNT_USD = 25;          // total capital per ladder
 const MIN_LIQUIDITY_USD = 10000;      // skip low liquidity markets
 const MODEL_AGREE_C = 0.8;            // max spread between models to be "agreed"
 const MIN_EV = 0.01;                  // minimum expected value (1%)
 
+// ---------- Discord Webhook ----------
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+
+async function sendDiscord(message) {
+  if (!DISCORD_WEBHOOK_URL) return;
+  try {
+    await axios.post(DISCORD_WEBHOOK_URL, { content: message });
+  } catch (err) {
+    console.error(`Discord error: ${err.message}`);
+  }
+}
+
 // ---------- Model run schedule (UTC) ----------
-// ECMWF runs at 00,06,12,18 UTC; GFS runs at 00,06,12,18 UTC too.
-// We'll fetch forecasts only after the latest run (allow 30 min for data to propagate)
 function getLatestModelRun() {
   const now = new Date();
   const utcHour = now.getUTCHours();
   const runs = [0, 6, 12, 18];
   let latestRun = 0;
   for (const run of runs) {
-    if (utcHour >= run + 0.5) latestRun = run; // data ready ~30 min after run
+    if (utcHour >= run + 0.5) latestRun = run;
   }
   return latestRun;
 }
@@ -30,17 +40,17 @@ function getLatestModelRun() {
 function isModelRunFresh() {
   const latest = getLatestModelRun();
   const now = new Date();
-  const runHour = latest;
   const runTime = new Date(now);
-  runTime.setUTCHours(runHour, 0, 0, 0);
+  runTime.setUTCHours(latest, 0, 0, 0);
   const diffMinutes = (now - runTime) / (1000 * 60);
-  return diffMinutes < 90; // only use forecasts within 90 minutes of a model run
+  return diffMinutes < 90;
 }
 
-// ---------- Ensemble weather with scheduling ----------
+// ---------- Ensemble weather ----------
 async function getEnsembleForecast(lat, lon) {
   if (!isModelRunFresh()) {
     console.log(`⏳ Model data stale – skipping until next run.`);
+    await sendDiscord(`⚠️ Model data stale for ${lat},${lon} – skipping scan`);
     return null;
   }
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
@@ -117,22 +127,19 @@ function computeEV(confidence, yesPrice) {
 }
 
 function buildLadder(forecast, buckets, agreement, currentTemp) {
-  // Find the bucket that contains the forecast (or nearest)
   let centralBucket = null;
   for (const b of buckets) {
-    if (Math.abs(b.temp - forecast) < 1.0) { // within 1°C
+    if (Math.abs(b.temp - forecast) < 1.0) {
       centralBucket = b;
       break;
     }
   }
   if (!centralBucket) return [];
-  // Ladder: buy central bucket, plus one above and one below (if they exist)
   const ladder = [centralBucket];
   const above = buckets.find(b => b.temp === centralBucket.temp + 1);
   const below = buckets.find(b => b.temp === centralBucket.temp - 1);
   if (above) ladder.push(above);
   if (below) ladder.push(below);
-  // Assign confidence based on agreement and distance from forecast
   const ladderTrades = [];
   for (const bucket of ladder) {
     let confidence = 70;
@@ -141,9 +148,8 @@ function buildLadder(forecast, buckets, agreement, currentTemp) {
     else if (diff === 1) confidence = 75;
     else confidence = 65;
     if (!agreement) confidence -= 10;
-    // Current temp override
     let direction = bucket.temp <= forecast ? 'YES' : 'NO';
-    if (currentTemp !== null && currentTemp > bucket.temp) direction = 'YES'; // force YES if already above threshold
+    if (currentTemp !== null && currentTemp > bucket.temp) direction = 'YES';
     const ev = computeEV(confidence, bucket.yesPrice);
     if (ev > MIN_EV) {
       ladderTrades.push({ bucket, confidence, direction, ev });
@@ -152,11 +158,10 @@ function buildLadder(forecast, buckets, agreement, currentTemp) {
   return ladderTrades;
 }
 
-// ---------- Execute ladder trades ----------
 async function executeLadder(city, slug, ladderTrades) {
   if (ladderTrades.length === 0) return;
   const capitalPerTrade = TRADE_AMOUNT_USD / ladderTrades.length;
-  console.log(`\n🏆 Ladder for ${city.name}:`);
+  let tradeSummary = `🏆 **Ladder for ${city.name}**\n`;
   for (const trade of ladderTrades) {
     const bucket = trade.bucket;
     const direction = trade.direction;
@@ -165,15 +170,16 @@ async function executeLadder(city, slug, ladderTrades) {
     const cost = shares * price;
     const payoutIfWin = shares * 1;
     const profit = payoutIfWin - cost;
-    console.log(`   → ${direction} ${bucket.temp}°C @ ${(price*100).toFixed(1)}c | ${shares} shares = $${cost.toFixed(2)} | EV: ${(trade.ev*100).toFixed(1)}%`);
+    tradeSummary += `→ ${direction} ${bucket.temp}°C @ ${(price*100).toFixed(1)}c | ${shares} shares = $${cost.toFixed(2)} | EV: ${(trade.ev*100).toFixed(1)}%\n`;
     if (!DRY_RUN) {
-      // Place order via Polymarket CLOB API (placeholder)
-      console.log(`      [LIVE] order placed`);
+      // Place order via Polymarket API (placeholder for real execution)
+      console.log(`   [LIVE] order placed for ${direction} ${bucket.temp}°C`);
     } else {
-      console.log(`      [DRY RUN] would buy ${direction} ${bucket.temp}°C`);
+      console.log(`   [DRY RUN] would buy ${direction} ${bucket.temp}°C`);
     }
     await new Promise(r => setTimeout(r, 500));
   }
+  await sendDiscord(tradeSummary);
 }
 
 // ---------- Main scan ----------
@@ -211,6 +217,7 @@ function printStats() {
   console.log(`\n📊 Stats | ${mins} min | Trades: ${stats.trades} | At risk: $${stats.cost.toFixed(2)} | Est profit: $${stats.potential.toFixed(2)}`);
 }
 
+// ---------- CITIES (add your full list) ----------
 const CITIES = [
   { name: 'Seoul', lat: 37.57, lon: 126.98 },
   { name: 'Singapore', lat: 1.29, lon: 103.85 },
@@ -237,15 +244,18 @@ const CITIES = [
   { name: 'Buenos Aires', lat: -34.60, lon: -58.38 },
   { name: 'Sao Paulo', lat: -23.55, lon: -46.63 }
 ];
+
 async function main() {
-  console.log('🚀 CERTova-X Elite Bot – Laddering + Model‑Run Sync');
+  console.log('🚀 CERTova-X Elite Bot – Laddering + Model‑Run Sync + Discord Alerts');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} per ladder | Min liquidity: $${MIN_LIQUIDITY_USD}`);
+  await sendDiscord('🤖 CERTova-X Elite Bot started – monitoring weather markets.');
   while (true) {
     await scan();
     printStats();
-    // Wait 30 minutes before next scan (model runs every 6h, but we check freshness inside)
     await new Promise(r => setTimeout(r, 30 * 60 * 1000));
   }
 }
 
 main().catch(console.error);
+
+
