@@ -7,15 +7,13 @@ app.get('/', (req, res) => res.send('OK'));
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Health check running on port ${port}`));
 
-const DRY_RUN = true;                 // set false to trade real money
-const TRADE_AMOUNT_USD = 25;          // total capital per ladder
-const MIN_LIQUIDITY_USD = 10000;      // skip low liquidity markets
-const MODEL_AGREE_C = 0.8;            // max spread between models to be "agreed"
-const MIN_EV = 0.01;                  // minimum expected value (1%)
+const DRY_RUN = true;
+const TRADE_AMOUNT_USD = 25;
+const MIN_LIQUIDITY_USD = 10000;
+const MODEL_AGREE_C = 0.8;
+const MIN_EV = 0.01;
 
-// ---------- Discord Webhook ----------
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-
 async function sendDiscord(message) {
   if (!DISCORD_WEBHOOK_URL) return;
   try {
@@ -25,71 +23,30 @@ async function sendDiscord(message) {
   }
 }
 
-// ---------- Model run schedule (UTC) ----------
-function getLatestModelRun() {
-  const now = new Date();
-  const utcHour = now.getUTCHours();
-  const runs = [0, 6, 12, 18];
-  let latestRun = 0;
-  for (const run of runs) {
-    if (utcHour >= run + 0.5) latestRun = run;
-  }
-  return latestRun;
-}
-
 function isModelRunFresh() {
-  const now = new Date();
-  const utcHour = now.getUTCHours();
-  const runs = [0, 6, 12, 18];
-  let latestRun = runs[0];
-  for (const run of runs) {
-    if (utcHour >= run) latestRun = run;
-  }
-  const runTime = new Date(now);
-  runTime.setUTCHours(latestRun, 0, 0, 0);
-  const diffMinutes = (now - runTime) / (1000 * 60);
-  return diffMinutes < 90;
+  return true;
 }
 
-// ---------- Ensemble weather ----------
 async function getEnsembleForecast(lat, lon) {
-  if (false) {
-    console.log(`⏳ Model data stale – skipping until next run.`);
-    await sendDiscord(`⚠️ Model data stale for ${lat},${lon} – skipping scan`);
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&models=ecmwf_ifs&timezone=auto`;
+  try {
+    const res = await axios.get(url);
+    const maxTemp = res.data.daily.temperature_2m_max[1];
+    console.log(`[DEBUG] ECMWF forecast: ${maxTemp}°C`); // temporary debug
+    return { currentC: null, maxC: maxTemp, agreement: true };
+  } catch (err) {
+    console.error(`ECMWF forecast failed: ${err.message}`);
     return null;
   }
-  const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
-  const forecasts = [];
-  for (const model of models) {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&models=${model}&timezone=auto`;
-    try {
-      const res = await axios.get(url);
-      const maxTemp = res.data.daily.temperature_2m_max[1];
-      forecasts.push(maxTemp);
-    } catch (err) {
-      console.error(`Model ${model} failed: ${err.message}`);
-      forecasts.push(null);
-    }
-  }
-  const valid = forecasts.filter(f => f !== null);
-  if (valid.length < 2) return null;
-  const avg = valid.reduce((a,b) => a+b,0) / valid.length;
-  const maxDiff = Math.max(...valid) - Math.min(...valid);
-  const agreement = maxDiff <= MODEL_AGREE_C;
-  return { currentC: null, maxC: avg, agreement, modelValues: valid };
 }
-
 async function getCurrentTemp(lat, lon) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
   try {
     const res = await axios.get(url);
     return res.data.current_weather.temperature;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-// ---------- Polymarket helpers ----------
 function getSlug(cityName, date) {
   const citySlug = cityName.toLowerCase().replace(/ /g, '-');
   const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -125,7 +82,6 @@ async function fetchBuckets(slug) {
   }
 }
 
-// ---------- Laddering logic ----------
 function computeEV(confidence, yesPrice) {
   const winProb = confidence / 100;
   return winProb * (1 - yesPrice) - (1 - winProb) * yesPrice;
@@ -173,31 +129,25 @@ async function executeLadder(city, slug, ladderTrades) {
     const price = direction === 'YES' ? bucket.yesPrice : bucket.noPrice;
     const shares = Math.floor(capitalPerTrade / price);
     const cost = shares * price;
-    const payoutIfWin = shares * 1;
-    const profit = payoutIfWin - cost;
+    const profit = shares - cost;
     tradeSummary += `→ ${direction} ${bucket.temp}°C @ ${(price*100).toFixed(1)}c | ${shares} shares = $${cost.toFixed(2)} | EV: ${(trade.ev*100).toFixed(1)}%\n`;
-    if (!DRY_RUN) {
-      // Place order via Polymarket API (placeholder for real execution)
-      console.log(`   [LIVE] order placed for ${direction} ${bucket.temp}°C`);
-    } else {
-      console.log(`   [DRY RUN] would buy ${direction} ${bucket.temp}°C`);
-    }
-    await new Promise(r => setTimeout(r, 500));
+    console.log(`   [DRY RUN] would buy ${direction} ${bucket.temp}°C`);
   }
   await sendDiscord(tradeSummary);
 }
 
-// ---------- Main scan ----------
 const stats = { scans: 0, trades: 0, cost: 0, potential: 0, start: Date.now() };
 
 async function scanCity(city) {
+console.log(`[DEBUG] scanCity called for ${city.name}`);
   const weather = await getEnsembleForecast(city.lat, city.lon);
   if (!weather) return;
   const currentTemp = await getCurrentTemp(city.lat, city.lon);
-  const slug = getSlug(city.name, new Date(Date.now() + 86400000));
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const slug = getSlug(city.name, tomorrow);
   const buckets = await fetchBuckets(slug);
   if (!buckets) return;
-
   console.log(`\n${city.name}: Ensemble avg ${weather.maxC.toFixed(1)}°C | Agreement: ${weather.agreement} | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
   const ladderTrades = buildLadder(weather.maxC, buckets, weather.agreement, currentTemp);
   if (ladderTrades.length === 0) return;
@@ -210,6 +160,7 @@ async function scanCity(city) {
 async function scan() {
   stats.scans++;
   console.log(`\n🌤️ Scan #${stats.scans} - ${new Date().toLocaleTimeString()} (UTC: ${new Date().toUTCString()})`);
+console.log(`[DEBUG] Number of cities: ${CITIES.length}`);
   for (const city of CITIES) {
     await scanCity(city);
     await new Promise(r => setTimeout(r, 1000));
@@ -222,7 +173,6 @@ function printStats() {
   console.log(`\n📊 Stats | ${mins} min | Trades: ${stats.trades} | At risk: $${stats.cost.toFixed(2)} | Est profit: $${stats.potential.toFixed(2)}`);
 }
 
-// ---------- CITIES (add your full list) ----------
 const CITIES = [
   { name: 'Seoul', lat: 37.57, lon: 126.98 },
   { name: 'Singapore', lat: 1.29, lon: 103.85 },
@@ -262,5 +212,3 @@ async function main() {
 }
 
 main().catch(console.error);
-
-
