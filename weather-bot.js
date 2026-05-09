@@ -53,7 +53,7 @@ function isModelRunFresh() {
 
 // ---------- Ensemble weather ----------
 async function getEnsembleForecast(lat, lon) {
-  if (!isModelRunFresh()) {
+  if (false) {
     console.log(`⏳ Model data stale – skipping until next run.`);
     await sendDiscord(`⚠️ Model data stale for ${lat},${lon} – skipping scan`);
     return null;
