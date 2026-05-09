@@ -7,12 +7,12 @@ app.get('/', (req, res) => res.send('OK'));
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Health check running on port ${port}`));
 
-const DRY_RUN = true;
-const TRADE_AMOUNT_USD = 25;
-const MIN_LIQUIDITY_USD = 10000;
-const MODEL_AGREE_C = 0.8;
-const MIN_EV = 0.01;
+const DRY_RUN = true;                 // set false to trade real money
+const TRADE_AMOUNT_USD = 25;          // total capital per ladder
+const MIN_LIQUIDITY_USD = 10000;      // skip low liquidity markets
+const MIN_EV = 0.01;                  // minimum expected value (1%)
 
+// ---------- Discord Webhook ----------
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 async function sendDiscord(message) {
   if (!DISCORD_WEBHOOK_URL) return;
@@ -23,29 +23,24 @@ async function sendDiscord(message) {
   }
 }
 
+// ---------- Force fresh data (disable model‑run check) ----------
 function isModelRunFresh() {
-  return true;
+  return true; // always trade
 }
 
-async function getEnsembleForecast(lat, lon) {
-  const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
-  const forecasts = [];
-  for (const model of models) {
-    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&daily=temperature_2m_max&models=' + model + '&timezone=auto';
-    try {
-      const res = await axios.get(url, { timeout: 20000 });
-      const maxTemp = res.data.daily.temperature_2m_max[1];
-      forecasts.push(maxTemp);
-    } catch (err) {
-      console.error(`Model ${model} failed: ${err.message}`);
-    }
+// ---------- Single model weather (ECMWF, reliable) ----------
+async function getForecast(lat, lon) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&models=ecmwf_ifs&timezone=auto`;
+  try {
+    const res = await axios.get(url, { timeout: 20000 });
+    const maxTemp = res.data.daily.temperature_2m_max[1];
+    return { currentC: null, maxC: maxTemp, agreement: true };
+  } catch (err) {
+    console.error(`Weather forecast failed: ${err.message}`);
+    return null;
   }
-  if (forecasts.length === 0) return null;
-  const avg = forecasts.reduce((a,b) => a+b,0) / forecasts.length;
-  const maxDiff = Math.max(...forecasts) - Math.min(...forecasts);
-  const agreement = maxDiff <= 0.8;
-  return { currentC: null, maxC: avg, agreement };
 }
+
 async function getCurrentTemp(lat, lon) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
   try {
@@ -54,6 +49,7 @@ async function getCurrentTemp(lat, lon) {
   } catch { return null; }
 }
 
+// ---------- Polymarket helpers ----------
 function getSlug(cityName, date) {
   const citySlug = cityName.toLowerCase().replace(/ /g, '-');
   const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -89,12 +85,13 @@ async function fetchBuckets(slug) {
   }
 }
 
+// ---------- Laddering logic ----------
 function computeEV(confidence, yesPrice) {
   const winProb = confidence / 100;
   return winProb * (1 - yesPrice) - (1 - winProb) * yesPrice;
 }
 
-function buildLadder(forecast, buckets, agreement, currentTemp) {
+function buildLadder(forecast, buckets, currentTemp) {
   let centralBucket = null;
   for (const b of buckets) {
     if (Math.abs(b.temp - forecast) < 1.0) {
@@ -115,7 +112,6 @@ function buildLadder(forecast, buckets, agreement, currentTemp) {
     if (diff === 0) confidence = 85;
     else if (diff === 1) confidence = 75;
     else confidence = 65;
-    if (!agreement) confidence -= 10;
     let direction = bucket.temp <= forecast ? 'YES' : 'NO';
     if (currentTemp !== null && currentTemp > bucket.temp) direction = 'YES';
     const ev = computeEV(confidence, bucket.yesPrice);
@@ -143,11 +139,11 @@ async function executeLadder(city, slug, ladderTrades) {
   await sendDiscord(tradeSummary);
 }
 
+// ---------- Main scan ----------
 const stats = { scans: 0, trades: 0, cost: 0, potential: 0, start: Date.now() };
 
 async function scanCity(city) {
-console.log(`[DEBUG] scanCity called for ${city.name}`);
-  const weather = await getEnsembleForecast(city.lat, city.lon);
+  const weather = await getForecast(city.lat, city.lon);
   if (!weather) return;
   const currentTemp = await getCurrentTemp(city.lat, city.lon);
   const tomorrow = new Date();
@@ -155,8 +151,8 @@ console.log(`[DEBUG] scanCity called for ${city.name}`);
   const slug = getSlug(city.name, tomorrow);
   const buckets = await fetchBuckets(slug);
   if (!buckets) return;
-  console.log(`\n${city.name}: Ensemble avg ${weather.maxC.toFixed(1)}°C | Agreement: ${weather.agreement} | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
-  const ladderTrades = buildLadder(weather.maxC, buckets, weather.agreement, currentTemp);
+  console.log(`\n${city.name}: Forecast ${weather.maxC.toFixed(1)}°C | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
+  const ladderTrades = buildLadder(weather.maxC, buckets, currentTemp);
   if (ladderTrades.length === 0) return;
   await executeLadder(city, slug, ladderTrades);
   stats.trades += ladderTrades.length;
@@ -167,12 +163,11 @@ console.log(`[DEBUG] scanCity called for ${city.name}`);
 async function scan() {
   stats.scans++;
   console.log(`\n🌤️ Scan #${stats.scans} - ${new Date().toLocaleTimeString()} (UTC: ${new Date().toUTCString()})`);
-console.log(`[DEBUG] Number of cities: ${CITIES.length}`);
   for (const city of CITIES) {
     await scanCity(city);
     await new Promise(r => setTimeout(r, 1000));
   }
-  console.log(`\n⏳ Scan done. Next scan in 30 minutes (model runs every 6h).`);
+  console.log(`\n⏳ Scan done. Next scan in 30 minutes.`);
 }
 
 function printStats() {
@@ -180,6 +175,7 @@ function printStats() {
   console.log(`\n📊 Stats | ${mins} min | Trades: ${stats.trades} | At risk: $${stats.cost.toFixed(2)} | Est profit: $${stats.potential.toFixed(2)}`);
 }
 
+// ---------- CITIES (full 24 cities) ----------
 const CITIES = [
   { name: 'Seoul', lat: 37.57, lon: 126.98 },
   { name: 'Singapore', lat: 1.29, lon: 103.85 },
@@ -208,8 +204,8 @@ const CITIES = [
 ];
 
 async function main() {
-  console.log('🚀 CERTova-X Elite Bot – Laddering + Model‑Run Sync + Discord Alerts');
-  console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} per ladder | Min liquidity: $${MIN_LIQUIDITY_USD}`);
+  console.log('🚀 CERTova-X Elite Bot – Single model (ECMWF) + Laddering + Discord');
+  console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
   await sendDiscord('🤖 CERTova-X Elite Bot started – monitoring weather markets.');
   while (true) {
     await scan();
