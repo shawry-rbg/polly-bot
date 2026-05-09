@@ -7,29 +7,23 @@ app.get('/', (req, res) => res.send('OK'));
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Health check running on port ${port}`));
 
-const DRY_RUN = true;                 // set false to trade real money
-const TRADE_AMOUNT_USD = 25;          // total capital per ladder
-const MIN_LIQUIDITY_USD = 10000;      // skip low liquidity markets
-const MIN_EV = 0.01;                  // minimum expected value (1%)
-const MODEL_TIMEOUT_MS = 15000;       // 15 seconds per model
+const DRY_RUN = true;
+const TRADE_AMOUNT_USD = 25;
+const MIN_LIQUIDITY_USD = 10000;
+const MIN_EV = 0.01;
+const MODEL_TIMEOUT_MS = 15000;
 
-// ---------- Discord Webhook ----------
+// Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
-async function sendDiscord(message) {
+async function sendDiscord(msg) {
   if (!DISCORD_WEBHOOK_URL) return;
-  try {
-    await axios.post(DISCORD_WEBHOOK_URL, { content: message });
-  } catch (err) {
-    console.error(`Discord error: ${err.message}`);
-  }
+  try { await axios.post(DISCORD_WEBHOOK_URL, { content: msg }); } catch(e) {}
 }
 
-// ---------- No staleness check – always trade ----------
-function isModelRunFresh() {
-  return true;
-}
+// Always trade (no staleness check)
+function isModelRunFresh() { return true; }
 
-// ---------- Multi‑model ensemble (ECMWF, GFS, ICON) ----------
+// Multi‑model ensemble with detailed logging
 async function getEnsembleForecast(lat, lon) {
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
   const forecasts = [];
@@ -39,120 +33,134 @@ async function getEnsembleForecast(lat, lon) {
       const res = await axios.get(url, { timeout: MODEL_TIMEOUT_MS });
       const maxTemp = res.data.daily.temperature_2m_max[1];
       forecasts.push(maxTemp);
-      console.log(`✅ ${model.toUpperCase()}: ${maxTemp}°C`);
+      console.log(`${model.toUpperCase()}: ${maxTemp}°C`);
     } catch (err) {
-      console.error(`❌ ${model.toUpperCase()} failed: ${err.message}`);
+      console.log(`${model.toUpperCase()} failed: ${err.message}`);
     }
   }
   if (forecasts.length === 0) return null;
   const avg = forecasts.reduce((a,b) => a+b,0) / forecasts.length;
   const maxDiff = Math.max(...forecasts) - Math.min(...forecasts);
-  const agreement = maxDiff <= 0.8; // models agree within 0.8°C
+  const agreement = maxDiff <= 0.8;
   return { maxC: avg, agreement };
 }
 
 async function getCurrentTemp(lat, lon) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
-  try {
-    const res = await axios.get(url);
-    return res.data.current_weather.temperature;
-  } catch { return null; }
+  try { const res = await axios.get(url); return res.data.current_weather.temperature; } catch { return null; }
 }
 
-// ---------- Polymarket helpers ----------
+// Generate slug (e.g., highest-temperature-in-seoul-on-may-10-2026)
 function getSlug(cityName, date) {
   const citySlug = cityName.toLowerCase().replace(/ /g, '-');
-  const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const monthNames = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
   const month = monthNames[date.getMonth()];
   const day = date.getDate();
   const year = date.getFullYear();
   return `highest-temperature-in-${citySlug}-on-${month}-${day}-${year}`;
 }
 
-async function fetchBuckets(slug) {
-  const url = `https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`;
+// Fetch market buckets (tries data-api first, then gamma-api)
+async function fetchBuckets(cityName, targetDate) {
+  const slug = getSlug(cityName, targetDate);
+  // Try data-api.polymarket.com
+  const dataUrl = `https://data-api.polymarket.com/markets?slug=${slug}`;
   try {
-    const res = await axios.get(url);
+    const res = await axios.get(dataUrl);
     const market = res.data[0];
-    if (!market || !market.outcomes || !market.outcomePrices) return null;
-    if ((market.volume24hr || 0) < MIN_LIQUIDITY_USD) return null;
-    const outcomes = JSON.parse(market.outcomes);
-    const prices = JSON.parse(market.outcomePrices).map(p => parseFloat(p));
-    const thresholds = outcomes.map(out => {
-      const match = out.match(/(\d+)/);
-      return match ? parseInt(match[1], 10) : null;
-    });
-    const buckets = [];
-    for (let i = 0; i < thresholds.length; i++) {
-      if (thresholds[i] !== null) {
-        buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
+    if (market && market.outcomes && market.outcomePrices) {
+      const outcomes = JSON.parse(market.outcomes);
+      const prices = JSON.parse(market.outcomePrices).map(p => parseFloat(p));
+      const thresholds = outcomes.map(out => {
+        const match = out.match(/(\d+)/);
+        return match ? parseInt(match[1]) : null;
+      });
+      const buckets = [];
+      for (let i = 0; i < thresholds.length; i++) {
+        if (thresholds[i] !== null) {
+          buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
+        }
       }
+      if (buckets.length) return buckets;
     }
-    return buckets;
   } catch (err) {
-    console.error(`Fetch buckets error: ${err.message}`);
-    return null;
+    // ignore, fallback to gamma
   }
+  // Fallback to gamma-api.polymarket.com
+  const gammaUrl = `https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`;
+  try {
+    const res = await axios.get(gammaUrl);
+    const market = res.data[0];
+    if (market && market.outcomes && market.outcomePrices) {
+      const outcomes = JSON.parse(market.outcomes);
+      const prices = JSON.parse(market.outcomePrices).map(p => parseFloat(p));
+      const thresholds = outcomes.map(out => {
+        const match = out.match(/(\d+)/);
+        return match ? parseInt(match[1]) : null;
+      });
+      const buckets = [];
+      for (let i = 0; i < thresholds.length; i++) {
+        if (thresholds[i] !== null) {
+          buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
+        }
+      }
+      return buckets;
+    }
+  } catch (err) {}
+  console.log(`No buckets for ${cityName} (API lag)`);
+  return null;
 }
 
-// ---------- Laddering logic ----------
-function computeEV(confidence, yesPrice) {
-  const winProb = confidence / 100;
+// Expected value calculation
+function computeEV(conf, yesPrice) {
+  const winProb = conf / 100;
   return winProb * (1 - yesPrice) - (1 - winProb) * yesPrice;
 }
 
+// Build ladder (central bucket ± 1°C)
 function buildLadder(forecast, buckets, agreement, currentTemp) {
-  let centralBucket = null;
-  for (const b of buckets) {
-    if (Math.abs(b.temp - forecast) < 1.0) {
-      centralBucket = b;
-      break;
-    }
-  }
-  if (!centralBucket) return [];
-  const ladder = [centralBucket];
-  const above = buckets.find(b => b.temp === centralBucket.temp + 1);
-  const below = buckets.find(b => b.temp === centralBucket.temp - 1);
+  let central = buckets.find(b => Math.abs(b.temp - forecast) < 1);
+  if (!central) return [];
+  const ladder = [central];
+  const above = buckets.find(b => b.temp === central.temp + 1);
+  const below = buckets.find(b => b.temp === central.temp - 1);
   if (above) ladder.push(above);
   if (below) ladder.push(below);
-  const ladderTrades = [];
-  for (const bucket of ladder) {
-    let confidence = 70;
-    const diff = Math.abs(bucket.temp - forecast);
-    if (diff === 0) confidence = 85;
-    else if (diff === 1) confidence = 75;
-    else confidence = 65;
-    if (!agreement) confidence -= 10;
-    let direction = bucket.temp <= forecast ? 'YES' : 'NO';
-    if (currentTemp !== null && currentTemp > bucket.temp) direction = 'YES';
-    const ev = computeEV(confidence, direction === 'YES' ? bucket.yesPrice : bucket.noPrice);
-    if (ev > MIN_EV) {
-      ladderTrades.push({ bucket, confidence, direction, ev });
-    }
+  const trades = [];
+  for (const b of ladder) {
+    let conf = 70;
+    const diff = Math.abs(b.temp - forecast);
+    if (diff === 0) conf = 85;
+    else if (diff === 1) conf = 75;
+    else conf = 65;
+    if (!agreement) conf -= 10;
+    let dir = b.temp <= forecast ? 'YES' : 'NO';
+    if (currentTemp !== null && currentTemp > b.temp) dir = 'YES';
+    const ev = computeEV(conf, dir === 'YES' ? b.yesPrice : b.noPrice);
+    if (ev > MIN_EV) trades.push({ bucket: b, confidence: conf, direction: dir, ev });
   }
-  return ladderTrades;
+  return trades;
 }
 
-async function executeLadder(city, slug, ladderTrades) {
-  if (ladderTrades.length === 0) return;
-  const capitalPerTrade = TRADE_AMOUNT_USD / ladderTrades.length;
-  let tradeSummary = `🏆 **Ladder for ${city.name}**\n`;
-  for (const trade of ladderTrades) {
-    const bucket = trade.bucket;
-    const direction = trade.direction;
-    const price = direction === 'YES' ? bucket.yesPrice : bucket.noPrice;
-    const shares = Math.floor(capitalPerTrade / price);
+// Execute ladder (dry‑run or live)
+async function executeLadder(city, slug, trades) {
+  if (!trades.length) return;
+  const per = TRADE_AMOUNT_USD / trades.length;
+  let summary = `🏆 Ladder for ${city.name}\n`;
+  for (const t of trades) {
+    const price = t.direction === 'YES' ? t.bucket.yesPrice : t.bucket.noPrice;
+    const shares = Math.floor(per / price);
     const cost = shares * price;
-    const profit = shares - cost;
-    tradeSummary += `→ ${direction} ${bucket.temp}°C @ ${(price*100).toFixed(1)}c | ${shares} shares = $${cost.toFixed(2)} | EV: ${(trade.ev*100).toFixed(1)}%\n`;
-    console.log(`   [DRY RUN] would buy ${direction} ${bucket.temp}°C`);
+    summary += `${t.direction} ${t.bucket.temp}°C @ ${(price*100).toFixed(1)}c | ${shares} shares = $${cost.toFixed(2)} | EV: ${(t.ev*100).toFixed(1)}%\n`;
+    console.log(`   [DRY RUN] would buy ${t.direction} ${t.bucket.temp}°C`);
   }
-  await sendDiscord(tradeSummary);
+  await sendDiscord(summary);
 }
 
-// ---------- Scan ----------
+// Statistics
 const stats = { scans: 0, trades: 0, cost: 0, potential: 0, start: Date.now() };
 
+// Scan a single city
 async function scanCity(city) {
   console.log(`\n🔍 Scanning ${city.name}...`);
   const weather = await getEnsembleForecast(city.lat, city.lon);
@@ -160,21 +168,19 @@ async function scanCity(city) {
   const currentTemp = await getCurrentTemp(city.lat, city.lon);
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
+  const buckets = await fetchBuckets(city.name, tomorrow);
+  if (!buckets) return;
+  console.log(`   Ensemble avg: ${weather.maxC.toFixed(1)}°C | Agreement: ${weather.agreement} | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
+  const trades = buildLadder(weather.maxC, buckets, weather.agreement, currentTemp);
+  if (!trades.length) return;
   const slug = getSlug(city.name, tomorrow);
-  const buckets = await fetchBuckets(slug);
-  if (!buckets) {
-    console.log(`   ⚠️ No buckets for ${city.name} (market not yet created?)`);
-    return;
-  }
-  console.log(`   Forecast: ${weather.maxC.toFixed(1)}°C | Agreement: ${weather.agreement} | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
-  const ladderTrades = buildLadder(weather.maxC, buckets, weather.agreement, currentTemp);
-  if (ladderTrades.length === 0) return;
-  await executeLadder(city, slug, ladderTrades);
-  stats.trades += ladderTrades.length;
+  await executeLadder(city, slug, trades);
+  stats.trades += trades.length;
   stats.cost += TRADE_AMOUNT_USD;
-  stats.potential += ladderTrades.reduce((acc, t) => acc + (t.direction === 'YES' ? (1-t.bucket.yesPrice) : t.bucket.noPrice) * (TRADE_AMOUNT_USD / ladderTrades.length), 0);
+  stats.potential += trades.reduce((acc, t) => acc + (t.direction === 'YES' ? (1-t.bucket.yesPrice) : t.bucket.noPrice) * (TRADE_AMOUNT_USD / trades.length), 0);
 }
 
+// Scan all cities
 async function scan() {
   stats.scans++;
   console.log(`\n🌤️ Scan #${stats.scans} - ${new Date().toLocaleTimeString()} (UTC: ${new Date().toUTCString()})`);
@@ -190,7 +196,7 @@ function printStats() {
   console.log(`\n📊 Stats | ${mins} min | Trades: ${stats.trades} | At risk: $${stats.cost.toFixed(2)} | Est profit: $${stats.potential.toFixed(2)}`);
 }
 
-// ---------- CITIES (full list) ----------
+// Full list of 24 cities
 const CITIES = [
   { name: 'Seoul', lat: 37.57, lon: 126.98 },
   { name: 'Singapore', lat: 1.29, lon: 103.85 },
@@ -218,10 +224,11 @@ const CITIES = [
   { name: 'Sao Paulo', lat: -23.55, lon: -46.63 }
 ];
 
+// Main loop
 async function main() {
-  console.log('🚀 SUPER‑ELITE Bot – Multi‑Model Ensemble (ECMWF/GFS/ICON) + Laddering + Discord');
+  console.log('🚀 SUPER‑ELITE Bot – Multi‑Model + Gamma API (patient)');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
-  await sendDiscord('🤖 SUPER‑ELITE Bot started – multi‑model ensemble + laddering.');
+  await sendDiscord('🤖 SUPER‑ELITE Bot started – waiting for markets...');
   while (true) {
     await scan();
     printStats();
