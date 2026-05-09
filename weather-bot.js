@@ -38,10 +38,15 @@ function getLatestModelRun() {
 }
 
 function isModelRunFresh() {
-  const latest = getLatestModelRun();
   const now = new Date();
+  const utcHour = now.getUTCHours();
+  const runs = [0, 6, 12, 18];
+  let latestRun = runs[0];
+  for (const run of runs) {
+    if (utcHour >= run) latestRun = run;
+  }
   const runTime = new Date(now);
-  runTime.setUTCHours(latest, 0, 0, 0);
+  runTime.setUTCHours(latestRun, 0, 0, 0);
   const diffMinutes = (now - runTime) / (1000 * 60);
   return diffMinutes < 90;
 }
