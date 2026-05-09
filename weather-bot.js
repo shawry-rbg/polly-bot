@@ -33,7 +33,7 @@ async function getEnsembleForecast(lat, lon) {
   for (const model of models) {
     const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&daily=temperature_2m_max&models=' + model + '&timezone=auto';
     try {
-      const res = await axios.get(url, { timeout: 10000 });
+      const res = await axios.get(url, { timeout: 20000 });
       const maxTemp = res.data.daily.temperature_2m_max[1];
       forecasts.push(maxTemp);
     } catch (err) {
