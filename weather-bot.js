@@ -13,16 +13,17 @@ const MIN_LIQUIDITY_USD = 10000;
 const MIN_EV = 0.01;
 const MODEL_TIMEOUT_MS = 15000;
 
+// Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 async function sendDiscord(msg) {
   if (!DISCORD_WEBHOOK_URL) return;
   try { await axios.post(DISCORD_WEBHOOK_URL, { content: msg }); } catch(e) {}
 }
 
-function isModelRunFresh() { return true; }
-
 let notifiedFirstBucket = false;
+let lastHeartbeat = 0;
 
+// Multi‑model ensemble
 async function getEnsembleForecast(lat, lon) {
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
   const forecasts = [];
@@ -58,6 +59,7 @@ function getSlug(cityName, date) {
   return `highest-temperature-in-${citySlug}-on-${month}-${day}-${year}`;
 }
 
+// Gamma API only (stable and reachable)
 async function fetchBuckets(cityName, targetDate) {
   const slug = getSlug(cityName, targetDate);
   const dataUrl = `https://data-api.polymarket.com/markets?slug=${slug}`;
@@ -112,6 +114,7 @@ async function fetchBuckets(cityName, targetDate) {
   return null;
 }
 
+// EV, ladder, execution
 function computeEV(conf, yesPrice) {
   const winProb = conf / 100;
   return winProb * (1 - yesPrice) - (1 - winProb) * yesPrice;
@@ -219,12 +222,18 @@ const CITIES = [
 ];
 
 async function main() {
-  console.log('🚀 SUPER‑ELITE Bot – Gamma API + Fallback + Laddering');
+  console.log('🚀 SUPER‑ELITE Bot – Gamma API + Heartbeat + Laddering');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
   await sendDiscord('🤖 SUPER‑ELITE Bot started – waiting for Gamma API to index markets.');
   while (true) {
     await scan();
     printStats();
+    // Heartbeat every 60 minutes
+    const now = Date.now();
+    if (now - lastHeartbeat > 60 * 60 * 1000) {
+      lastHeartbeat = now;
+      await sendDiscord(`❤️ Bot heartbeat – still waiting for markets. ${stats.scans} scans completed.`);
+    }
     await new Promise(r => setTimeout(r, 5 * 60 * 1000));
   }
 }
