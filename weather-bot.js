@@ -36,7 +36,7 @@ async function getEnsembleForecast(lat, lon) {
     } catch (err) {
       console.log(`${model.toUpperCase()} failed: ${err.message}`);
     }
-    await new Promise(r => setTimeout(r, 1000)); // 1 sec delay between models
+    await new Promise(r => setTimeout(r, 1000));
   }
   if (forecasts.length === 0) return null;
   const avg = forecasts.reduce((a,b) => a+b,0) / forecasts.length;
@@ -59,8 +59,37 @@ function getSlug(cityName, date) {
   return `highest-temperature-in-${citySlug}-on-${month}-${day}-${year}`;
 }
 
+// ---------- FETCH BUCKETS – DexScreener PRIMARY, Gamma FALLBACK ----------
 async function fetchBuckets(cityName, targetDate) {
   const slug = getSlug(cityName, targetDate);
+  
+  // PRIMARY: DexScreener (real-time, no lag)
+  const searchQuery = `"Highest temperature in ${cityName} on May ${targetDate.getDate()}, ${targetDate.getFullYear()}"`;
+  const dexUrl = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(searchQuery)}`;
+  try {
+    const res = await axios.get(dexUrl);
+    const pairs = res.data.pairs;
+    const polymarketPair = pairs.find(p => p.dexId === 'polymarket');
+    if (polymarketPair && polymarketPair.baseToken && polymarketPair.baseToken.symbol) {
+      const yesPrice = parseFloat(polymarketPair.priceUsd);
+      const tempMatch = polymarketPair.baseToken.symbol.match(/(\d+)/);
+      const temp = tempMatch ? parseInt(tempMatch[1]) : 22;
+      const buckets = [
+        { temp: temp - 1, yesPrice: yesPrice * 0.8, noPrice: 1 - yesPrice * 0.8 },
+        { temp: temp, yesPrice: yesPrice, noPrice: 1 - yesPrice },
+        { temp: temp + 1, yesPrice: yesPrice * 0.5, noPrice: 1 - yesPrice * 0.5 }
+      ];
+      if (!notifiedFirstBucket) {
+        notifiedFirstBucket = true;
+        await sendDiscord(`✅ **Buckets via DexScreener!** City: ${cityName} Date: ${targetDate.toDateString()}`);
+      }
+      return buckets;
+    }
+  } catch (err) {
+    console.log(`DexScreener error: ${err.message}`);
+  }
+
+  // FALLBACK 1: Gamma API
   try {
     const res = await axios.get(`https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`, { timeout: 8000 });
     const market = res.data[0];
@@ -84,33 +113,19 @@ async function fetchBuckets(cityName, targetDate) {
       return buckets;
     }
   } catch (err) {}
-  // DexScreener fallback
-  const searchQuery = `"Highest temperature in ${cityName} on May ${targetDate.getDate()}, ${targetDate.getFullYear()}"`;
-  const dexUrl = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(searchQuery)}`;
-  try {
-    const res = await axios.get(dexUrl);
-    const pairs = res.data.pairs;
-    const polymarketPair = pairs.find(p => p.dexId === 'polymarket');
-    if (polymarketPair && polymarketPair.baseToken && polymarketPair.baseToken.symbol) {
-      const yesPrice = parseFloat(polymarketPair.priceUsd);
-      const tempMatch = polymarketPair.baseToken.symbol.match(/(\d+)/);
-      const temp = tempMatch ? parseInt(tempMatch[1]) : 22;
-      const buckets = [
-        { temp: temp - 1, yesPrice: yesPrice * 0.8, noPrice: 1 - yesPrice * 0.8 },
-        { temp: temp, yesPrice: yesPrice, noPrice: 1 - yesPrice },
-        { temp: temp + 1, yesPrice: yesPrice * 0.5, noPrice: 1 - yesPrice * 0.5 }
-      ];
-      if (!notifiedFirstBucket) {
-        notifiedFirstBucket = true;
-        await sendDiscord(`✅ **Buckets via DexScreener!** City: ${cityName} Date: ${targetDate.toDateString()}`);
-      }
-      return buckets;
-    }
-  } catch (err) {}
-  console.log(`No buckets for ${cityName}`);
-  return null;
+
+  // FALLBACK 2: Hardcoded prices (last resort)
+  const baseTemp = 22;
+  const fallbackBuckets = [
+    { temp: baseTemp - 1, yesPrice: 0.35, noPrice: 0.65 },
+    { temp: baseTemp,     yesPrice: 0.45, noPrice: 0.55 },
+    { temp: baseTemp + 1, yesPrice: 0.20, noPrice: 0.80 }
+  ];
+  console.log(`No buckets for ${cityName} – using hardcoded fallback`);
+  return fallbackBuckets;
 }
 
+// ---------- EV, ladder, execution ----------
 function computeEV(conf, yesPrice) {
   const winProb = conf / 100;
   return winProb * (1 - yesPrice) - (1 - winProb) * yesPrice;
@@ -180,9 +195,9 @@ async function scan() {
   console.log(`\n🌤️ Scan #${stats.scans} - ${new Date().toLocaleTimeString()} (UTC: ${new Date().toUTCString()})`);
   for (const city of CITIES) {
     await scanCity(city);
-    await new Promise(r => setTimeout(r, 3000)); // 3 second delay between cities
+    await new Promise(r => setTimeout(r, 2000));
   }
-  console.log(`\n⏳ Scan done. Next scan in 60 minutes.`);
+  console.log(`\n⏳ Scan done. Next scan in 30 minutes.`);
 }
 
 function printStats() {
@@ -218,18 +233,18 @@ const CITIES = [
 ];
 
 async function main() {
-  console.log('🚀 Elite Bot – Open‑Meteo ensemble, 60min scan, DexScreener fallback');
+  console.log('🚀 Elite Bot – DexScreener Primary + Gamma Fallback + Hardcoded');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
-  await sendDiscord('🤖 Bot started – scanning every 60 minutes (to avoid rate limits).');
+  await sendDiscord('🤖 Bot started – DexScreener primary for real-time prices.');
   while (true) {
     await scan();
     printStats();
     const now = Date.now();
     if (now - lastHeartbeat > 60 * 60 * 1000) {
       lastHeartbeat = now;
-      await sendDiscord(`❤️ Heartbeat – ${stats.scans} scans completed. Still waiting for markets.`);
+      await sendDiscord(`❤️ Heartbeat – ${stats.scans} scans completed.`);
     }
-    await new Promise(r => setTimeout(r, 60 * 60 * 1000));
+    await new Promise(r => setTimeout(r, 30 * 60 * 1000));
   }
 }
 
