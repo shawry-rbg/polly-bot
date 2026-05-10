@@ -11,7 +11,7 @@ const DRY_RUN = true;
 const TRADE_AMOUNT_USD = 25;
 const MIN_LIQUIDITY_USD = 10000;
 const MIN_EV = 0.01;
-const MODEL_TIMEOUT_MS = 10000;
+const MODEL_TIMEOUT_MS = 15000;
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 async function sendDiscord(msg) {
@@ -22,7 +22,7 @@ async function sendDiscord(msg) {
 let notifiedFirstBucket = false;
 let lastHeartbeat = 0;
 
-// Multi‑model ensemble (ECMWF, GFS, ICON) with delays
+// ---------- Multi‑model ensemble (ECMWF, GFS, ICON) ----------
 async function getEnsembleForecast(lat, lon) {
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
   const forecasts = [];
@@ -36,8 +36,7 @@ async function getEnsembleForecast(lat, lon) {
     } catch (err) {
       console.log(`${model.toUpperCase()} failed: ${err.message}`);
     }
-    // Delay between model calls to avoid rate limits
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 1000)); // 1 sec delay between models
   }
   if (forecasts.length === 0) return null;
   const avg = forecasts.reduce((a,b) => a+b,0) / forecasts.length;
@@ -181,9 +180,9 @@ async function scan() {
   console.log(`\n🌤️ Scan #${stats.scans} - ${new Date().toLocaleTimeString()} (UTC: ${new Date().toUTCString()})`);
   for (const city of CITIES) {
     await scanCity(city);
-    await new Promise(r => setTimeout(r, 2000)); // 2 sec delay between cities
+    await new Promise(r => setTimeout(r, 3000)); // 3 second delay between cities
   }
-  console.log(`\n⏳ Scan done. Next scan in 30 minutes.`);
+  console.log(`\n⏳ Scan done. Next scan in 60 minutes.`);
 }
 
 function printStats() {
@@ -219,18 +218,18 @@ const CITIES = [
 ];
 
 async function main() {
-  console.log('🚀 SUPER‑ELITE Bot – Multi‑Model + 30min scan + DexScreener fallback');
+  console.log('🚀 Elite Bot – Open‑Meteo ensemble, 60min scan, DexScreener fallback');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
-  await sendDiscord('🤖 SUPER‑ELITE Bot started – scanning every 30 minutes.');
+  await sendDiscord('🤖 Bot started – scanning every 60 minutes (to avoid rate limits).');
   while (true) {
     await scan();
     printStats();
     const now = Date.now();
     if (now - lastHeartbeat > 60 * 60 * 1000) {
       lastHeartbeat = now;
-      await sendDiscord(`❤️ Bot heartbeat – ${stats.scans} scans completed. Still waiting for markets.`);
+      await sendDiscord(`❤️ Heartbeat – ${stats.scans} scans completed. Still waiting for markets.`);
     }
-    await new Promise(r => setTimeout(r, 30 * 60 * 1000));
+    await new Promise(r => setTimeout(r, 60 * 60 * 1000));
   }
 }
 
