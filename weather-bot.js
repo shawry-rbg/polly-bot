@@ -234,7 +234,7 @@ async function main() {
       lastHeartbeat = now;
       await sendDiscord(`❤️ Bot heartbeat – still waiting for markets. ${stats.scans} scans completed.`);
     }
-    await new Promise(r => setTimeout(r, 5 * 60 * 1000));
+    await new Promise(r => setTimeout(r, 30 * 60 * 1000));
   }
 }
 
