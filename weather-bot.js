@@ -23,6 +23,9 @@ async function sendDiscord(msg) {
 // Always trade (no staleness check)
 function isModelRunFresh() { return true; }
 
+// Track first bucket found for Discord alert
+let notifiedFirstBucket = false;
+
 // Multi‑model ensemble with detailed logging
 async function getEnsembleForecast(lat, lon) {
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
@@ -60,10 +63,10 @@ function getSlug(cityName, date) {
   return `highest-temperature-in-${citySlug}-on-${month}-${day}-${year}`;
 }
 
-// Fetch market buckets (tries data-api first, then gamma-api)
+// Fetch market buckets – with API lag logging and Discord alert on first success
 async function fetchBuckets(cityName, targetDate) {
   const slug = getSlug(cityName, targetDate);
-  // Try data-api.polymarket.com
+  // Try data-api first
   const dataUrl = `https://data-api.polymarket.com/markets?slug=${slug}`;
   try {
     const res = await axios.get(dataUrl);
@@ -81,12 +84,14 @@ async function fetchBuckets(cityName, targetDate) {
           buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
         }
       }
-      if (buckets.length) return buckets;
+      if (buckets.length && !notifiedFirstBucket) {
+        notifiedFirstBucket = true;
+        await sendDiscord(`✅ **Buckets are now available!**\nCity: ${cityName}\nDate: ${targetDate.toDateString()}\nThe bot will start trading on the next scan.`);
+      }
+      return buckets;
     }
-  } catch (err) {
-    // ignore, fallback to gamma
-  }
-  // Fallback to gamma-api.polymarket.com
+  } catch (err) { /* ignore */ }
+  // Fallback to gamma-api
   const gammaUrl = `https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`;
   try {
     const res = await axios.get(gammaUrl);
@@ -103,6 +108,10 @@ async function fetchBuckets(cityName, targetDate) {
         if (thresholds[i] !== null) {
           buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
         }
+      }
+      if (buckets.length && !notifiedFirstBucket) {
+        notifiedFirstBucket = true;
+        await sendDiscord(`✅ **Buckets are now available!**\nCity: ${cityName}\nDate: ${targetDate.toDateString()}\nThe bot will start trading on the next scan.`);
       }
       return buckets;
     }
@@ -228,7 +237,7 @@ const CITIES = [
 async function main() {
   console.log('🚀 SUPER‑ELITE Bot – Multi‑Model + Gamma API (patient)');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
-  await sendDiscord('🤖 SUPER‑ELITE Bot started – waiting for markets...');
+  await sendDiscord('🤖 SUPER‑ELITE Bot started – monitoring weather markets. Will notify when API data becomes available.');
   while (true) {
     await scan();
     printStats();
