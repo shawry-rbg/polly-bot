@@ -13,7 +13,6 @@ const MIN_LIQUIDITY_USD = 10000;
 const MIN_EV = 0.01;
 const MODEL_TIMEOUT_MS = 15000;
 
-// Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 async function sendDiscord(msg) {
   if (!DISCORD_WEBHOOK_URL) return;
@@ -24,7 +23,6 @@ function isModelRunFresh() { return true; }
 
 let notifiedFirstBucket = false;
 
-// Multi‑model ensemble
 async function getEnsembleForecast(lat, lon) {
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
   const forecasts = [];
@@ -60,25 +58,8 @@ function getSlug(cityName, date) {
   return `highest-temperature-in-${citySlug}-on-${month}-${day}-${year}`;
 }
 
-// ---------- NEW: Discover all active temperature markets via /events ----------
-async function discoverTemperatureMarkets() {
-  const url = `https://gamma-api.polymarket.com/events?active=true&closed=false&limit=200&order=volume_24hr&ascending=false`;
-  try {
-    const res = await axios.get(url);
-    const events = res.data || [];
-    const allMarkets = events.flatMap(e => e.markets || []);
-    // Filter to only temperature markets (title contains "temperature")
-    return allMarkets.filter(m => m.title?.toLowerCase().includes('temperature'));
-  } catch (err) {
-    console.error(`Discovery error: ${err.message}`);
-    return [];
-  }
-}
-
-// ---------- Fetch buckets – first try slug, then fallback to discovery ----------
 async function fetchBuckets(cityName, targetDate) {
   const slug = getSlug(cityName, targetDate);
-  // 1) Try data-api with slug (fast path)
   const dataUrl = `https://data-api.polymarket.com/markets?slug=${slug}`;
   try {
     const res = await axios.get(dataUrl);
@@ -98,13 +79,11 @@ async function fetchBuckets(cityName, targetDate) {
       }
       if (buckets.length && !notifiedFirstBucket) {
         notifiedFirstBucket = true;
-        await sendDiscord(`✅ **Buckets via slug!** City: ${cityName} Date: ${targetDate.toDateString()}`);
+        await sendDiscord(`✅ **Buckets are now available!** City: ${cityName} Date: ${targetDate.toDateString()}`);
       }
       return buckets;
     }
-  } catch (err) { /* ignore */ }
-
-  // 2) Fallback to gamma-api with slug
+  } catch (err) {}
   const gammaUrl = `https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`;
   try {
     const res = await axios.get(gammaUrl);
@@ -124,46 +103,15 @@ async function fetchBuckets(cityName, targetDate) {
       }
       if (buckets.length && !notifiedFirstBucket) {
         notifiedFirstBucket = true;
-        await sendDiscord(`✅ **Buckets via gamma slug!** City: ${cityName} Date: ${targetDate.toDateString()}`);
+        await sendDiscord(`✅ **Buckets are now available!** City: ${cityName} Date: ${targetDate.toDateString()}`);
       }
       return buckets;
     }
-  } catch (err) { /* ignore */ }
-
-  // 3) Final fallback: discover all temperature markets and find the right one
-  console.log(`Slug failed for ${cityName}, trying discovery...`);
-  const allMarkets = await discoverTemperatureMarkets();
-  const targetDateStr = targetDate.toISOString().slice(0,10);
-  // Find market that matches city name and endDate (or title contains date)
-  const matchedMarket = allMarkets.find(m => {
-    const titleMatch = m.title?.toLowerCase().includes(cityName.toLowerCase());
-    const dateMatch = m.endDate?.startsWith(targetDateStr);
-    return titleMatch && dateMatch;
-  });
-  if (matchedMarket && matchedMarket.outcomes && matchedMarket.outcomePrices) {
-    const outcomes = JSON.parse(matchedMarket.outcomes);
-    const prices = JSON.parse(matchedMarket.outcomePrices).map(p => parseFloat(p));
-    const thresholds = outcomes.map(out => {
-      const match = out.match(/(\d+)/);
-      return match ? parseInt(match[1]) : null;
-    });
-    const buckets = [];
-    for (let i = 0; i < thresholds.length; i++) {
-      if (thresholds[i] !== null) {
-        buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
-      }
-    }
-    if (buckets.length && !notifiedFirstBucket) {
-      notifiedFirstBucket = true;
-      await sendDiscord(`✅ **Buckets via discovery!** City: ${cityName} Date: ${targetDate.toDateString()}`);
-    }
-    return buckets;
-  }
-  console.log(`No buckets for ${cityName} (API lag – slug & discovery both failed)`);
+  } catch (err) {}
+  console.log(`No buckets for ${cityName} (API lag)`);
   return null;
 }
 
-// ---------- EV, ladder, execution (unchanged) ----------
 function computeEV(conf, yesPrice) {
   const winProb = conf / 100;
   return winProb * (1 - yesPrice) - (1 - winProb) * yesPrice;
@@ -243,7 +191,6 @@ function printStats() {
   console.log(`\n📊 Stats | ${mins} min | Trades: ${stats.trades} | At risk: $${stats.cost.toFixed(2)} | Est profit: $${stats.potential.toFixed(2)}`);
 }
 
-// Full list of 24 cities
 const CITIES = [
   { name: 'Seoul', lat: 37.57, lon: 126.98 },
   { name: 'Singapore', lat: 1.29, lon: 103.85 },
@@ -272,9 +219,9 @@ const CITIES = [
 ];
 
 async function main() {
-  console.log('🚀 SUPER‑ELITE Bot – Multi‑Model + Fallback Discovery + Laddering');
+  console.log('🚀 SUPER‑ELITE Bot – Gamma API + Fallback + Laddering');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
-  await sendDiscord('🤖 SUPER‑ELITE Bot started – using slug and fallback discovery.');
+  await sendDiscord('🤖 SUPER‑ELITE Bot started – waiting for Gamma API to index markets.');
   while (true) {
     await scan();
     printStats();
