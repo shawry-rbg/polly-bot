@@ -197,7 +197,7 @@ async function scan() {
     await scanCity(city);
     await new Promise(r => setTimeout(r, 1000));
   }
-  console.log(`\n⏳ Scan done. Next scan in 30 minutes.`);
+console.log(`\n⏳ Scan done. Next scan in 5 minutes.`);
 }
 
 function printStats() {
@@ -241,7 +241,7 @@ async function main() {
   while (true) {
     await scan();
     printStats();
-    await new Promise(r => setTimeout(r, 30 * 60 * 1000));
+    await new Promise(r => setTimeout(r, 5 * 60 * 1000));
   }
 }
 
