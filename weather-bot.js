@@ -22,7 +22,7 @@ async function sendDiscord(msg) {
 let notifiedFirstBucket = false;
 let lastHeartbeat = 0;
 
-// ---------- Multi‑model ensemble (ECMWF, GFS, ICON) ----------
+// ---------- Multi-model ensemble (ECMWF, GFS, ICON) ----------
 async function getEnsembleForecast(lat, lon) {
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
   const forecasts = [];
@@ -32,9 +32,9 @@ async function getEnsembleForecast(lat, lon) {
       const res = await axios.get(url, { timeout: MODEL_TIMEOUT_MS });
       const maxTemp = res.data.daily.temperature_2m_max[1];
       forecasts.push(maxTemp);
-      console.log(`${model.toUpperCase()}: ${maxTemp}°C`);
+      console.log(`   ${model.toUpperCase()}: ${maxTemp}°C`);
     } catch (err) {
-      console.log(`${model.toUpperCase()} failed: ${err.message}`);
+      console.log(`   ${model.toUpperCase()} failed: ${err.message}`);
     }
     await new Promise(r => setTimeout(r, 1000));
   }
@@ -59,70 +59,187 @@ function getSlug(cityName, date) {
   return `highest-temperature-in-${citySlug}-on-${month}-${day}-${year}`;
 }
 
-// ---------- FETCH BUCKETS – DexScreener PRIMARY, Gamma FALLBACK ----------
+// ---------- FALLBACK BUCKETS (All Cities) ----------
+function getFallbackBuckets(cityName) {
+  const cityLower = cityName.toLowerCase();
+  const priceMap = {
+    'seoul': [
+      { temp: 18, yesPrice: 0.23, noPrice: 0.77 },
+      { temp: 19, yesPrice: 0.34, noPrice: 0.66 },
+      { temp: 20, yesPrice: 0.25, noPrice: 0.75 },
+      { temp: 21, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 22, yesPrice: 0.08, noPrice: 0.92 },
+      { temp: 23, yesPrice: 0.04, noPrice: 0.96 }
+    ],
+    'tokyo': [
+      { temp: 21, yesPrice: 0.35, noPrice: 0.65 },
+      { temp: 22, yesPrice: 0.25, noPrice: 0.75 },
+      { temp: 23, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 24, yesPrice: 0.10, noPrice: 0.90 }
+    ],
+    'shanghai': [
+      { temp: 28, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 29, yesPrice: 0.13, noPrice: 0.87 },
+      { temp: 30, yesPrice: 0.08, noPrice: 0.92 },
+      { temp: 31, yesPrice: 0.04, noPrice: 0.96 }
+    ],
+    'singapore': [
+      { temp: 29, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 30, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 31, yesPrice: 0.08, noPrice: 0.92 },
+      { temp: 32, yesPrice: 0.04, noPrice: 0.96 }
+    ],
+    'hong kong': [
+      { temp: 27, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 28, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 29, yesPrice: 0.10, noPrice: 0.90 }
+    ],
+    'taipei': [
+      { temp: 25, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 26, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 27, yesPrice: 0.10, noPrice: 0.90 }
+    ],
+    'lucknow': [
+      { temp: 38, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 39, yesPrice: 0.10, noPrice: 0.90 },
+      { temp: 40, yesPrice: 0.05, noPrice: 0.95 }
+    ],
+    'london': [
+      { temp: 12, yesPrice: 0.10, noPrice: 0.90 },
+      { temp: 13, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 14, yesPrice: 0.20, noPrice: 0.80 }
+    ],
+    'paris': [
+      { temp: 16, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 17, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 18, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'madrid': [
+      { temp: 22, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 23, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 24, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'milan': [
+      { temp: 20, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 21, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 22, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'warsaw': [
+      { temp: 19, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 20, yesPrice: 0.25, noPrice: 0.75 },
+      { temp: 21, yesPrice: 0.30, noPrice: 0.70 }
+    ],
+    'tel aviv': [
+      { temp: 28, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 29, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 30, yesPrice: 0.10, noPrice: 0.90 }
+    ],
+    'ankara': [
+      { temp: 20, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 21, yesPrice: 0.25, noPrice: 0.75 },
+      { temp: 22, yesPrice: 0.30, noPrice: 0.70 }
+    ],
+    'nyc': [
+      { temp: 17, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 18, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 19, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'miami': [
+      { temp: 29, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 30, yesPrice: 0.25, noPrice: 0.75 },
+      { temp: 31, yesPrice: 0.30, noPrice: 0.70 }
+    ],
+    'chicago': [
+      { temp: 10, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 11, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 12, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'dallas': [
+      { temp: 24, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 25, yesPrice: 0.25, noPrice: 0.75 },
+      { temp: 26, yesPrice: 0.30, noPrice: 0.70 }
+    ],
+    'atlanta': [
+      { temp: 23, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 24, yesPrice: 0.25, noPrice: 0.75 },
+      { temp: 25, yesPrice: 0.30, noPrice: 0.70 }
+    ],
+    'seattle': [
+      { temp: 16, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 17, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 18, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'toronto': [
+      { temp: 14, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 15, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 16, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'wellington': [
+      { temp: 12, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 13, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 14, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'buenos aires': [
+      { temp: 16, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 17, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 18, yesPrice: 0.25, noPrice: 0.75 }
+    ],
+    'sao paulo': [
+      { temp: 22, yesPrice: 0.15, noPrice: 0.85 },
+      { temp: 23, yesPrice: 0.20, noPrice: 0.80 },
+      { temp: 24, yesPrice: 0.25, noPrice: 0.75 }
+    ]
+  };
+  return priceMap[cityLower] || [
+    { temp: 22, yesPrice: 0.20, noPrice: 0.80 },
+    { temp: 23, yesPrice: 0.15, noPrice: 0.85 }
+  ];
+}
+
+// ---------- FETCH BUCKETS – Try API first, then fallback ----------
 async function fetchBuckets(cityName, targetDate) {
-  const slug = getSlug(cityName, targetDate);
-  
-  // PRIMARY: DexScreener (real-time, no lag)
-  const searchQuery = `"Highest temperature in ${cityName} on May ${targetDate.getDate()}, ${targetDate.getFullYear()}"`;
-  const dexUrl = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(searchQuery)}`;
+  // Try to get live prices from Polymarket
   try {
-    const res = await axios.get(dexUrl);
-    const pairs = res.data.pairs;
-    const polymarketPair = pairs.find(p => p.dexId === 'polymarket');
-    if (polymarketPair && polymarketPair.baseToken && polymarketPair.baseToken.symbol) {
-      const yesPrice = parseFloat(polymarketPair.priceUsd);
-      const tempMatch = polymarketPair.baseToken.symbol.match(/(\d+)/);
-      const temp = tempMatch ? parseInt(tempMatch[1]) : 22;
-      const buckets = [
-        { temp: temp - 1, yesPrice: yesPrice * 0.8, noPrice: 1 - yesPrice * 0.8 },
-        { temp: temp, yesPrice: yesPrice, noPrice: 1 - yesPrice },
-        { temp: temp + 1, yesPrice: yesPrice * 0.5, noPrice: 1 - yesPrice * 0.5 }
-      ];
-      if (!notifiedFirstBucket) {
-        notifiedFirstBucket = true;
-        await sendDiscord(`✅ **Buckets via DexScreener!** City: ${cityName} Date: ${targetDate.toDateString()}`);
+    const searchUrl = `https://gamma-api.polymarket.com/markets?limit=200`;
+    const response = await axios.get(searchUrl, { timeout: 8000 });
+    const market = response.data.find(m => 
+      m.question?.toLowerCase().includes(cityName.toLowerCase()) && 
+      m.question?.toLowerCase().includes('temperature')
+    );
+    
+    if (market && market.clobTokenIds) {
+      const tokenIds = JSON.parse(market.clobTokenIds);
+      const outcomes = JSON.parse(market.outcomes);
+      const buckets = [];
+      
+      for (let i = 0; i < tokenIds.length; i++) {
+        try {
+          const priceUrl = `https://clob.polymarket.com/last-trade-price?id=${tokenIds[i]}`;
+          const priceRes = await axios.get(priceUrl, { timeout: 5000 });
+          const tempMatch = outcomes[i].match(/(\d+)/);
+          
+          if (tempMatch && priceRes.data.price) {
+            buckets.push({
+              temp: parseInt(tempMatch[1]),
+              yesPrice: parseFloat(priceRes.data.price),
+              noPrice: 1 - parseFloat(priceRes.data.price)
+            });
+          }
+        } catch (err) {}
       }
-      return buckets;
+      
+      if (buckets.length > 0) {
+        console.log(`   ✅ Live prices from CLOB API`);
+        return buckets;
+      }
     }
   } catch (err) {
-    console.log(`DexScreener error: ${err.message}`);
+    console.log(`   API error: ${err.message}`);
   }
-
-  // FALLBACK 1: Gamma API
-  try {
-    const res = await axios.get(`https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`, { timeout: 8000 });
-    const market = res.data[0];
-    if (market && market.outcomes && market.outcomePrices) {
-      const outcomes = JSON.parse(market.outcomes);
-      const prices = JSON.parse(market.outcomePrices).map(p => parseFloat(p));
-      const thresholds = outcomes.map(out => {
-        const match = out.match(/(\d+)/);
-        return match ? parseInt(match[1]) : null;
-      });
-      const buckets = [];
-      for (let i = 0; i < thresholds.length; i++) {
-        if (thresholds[i] !== null) {
-          buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
-        }
-      }
-      if (buckets.length && !notifiedFirstBucket) {
-        notifiedFirstBucket = true;
-        await sendDiscord(`✅ **Buckets via Gamma!** City: ${cityName} Date: ${targetDate.toDateString()}`);
-      }
-      return buckets;
-    }
-  } catch (err) {}
-
-  // FALLBACK 2: Hardcoded prices (last resort)
-  const baseTemp = 22;
-  const fallbackBuckets = [
-    { temp: baseTemp - 1, yesPrice: 0.35, noPrice: 0.65 },
-    { temp: baseTemp,     yesPrice: 0.45, noPrice: 0.55 },
-    { temp: baseTemp + 1, yesPrice: 0.20, noPrice: 0.80 }
-  ];
-  console.log(`No buckets for ${cityName} – using hardcoded fallback`);
-  return fallbackBuckets;
+  
+  // Fallback to hardcoded prices
+  console.log(`   Using fallback prices for ${cityName}`);
+  return getFallbackBuckets(cityName);
 }
 
 // ---------- EV, ladder, execution ----------
@@ -132,30 +249,30 @@ function computeEV(conf, yesPrice) {
 }
 
 function buildLadder(forecast, buckets, agreement, currentTemp) {
-  let central = buckets.find(b => Math.abs(b.temp - forecast) < 1);
-  if (!central) return [];
-  const ladder = [central];
-  const above = buckets.find(b => b.temp === central.temp + 1);
-  const below = buckets.find(b => b.temp === central.temp - 1);
-  if (above) ladder.push(above);
-  if (below) ladder.push(below);
+  let central = buckets.find(b => Math.abs(b.temp - forecast) < 1.5);
+  if (!central) central = buckets[Math.floor(buckets.length / 2)];
   const trades = [];
-  for (const b of ladder) {
+  
+  for (const b of buckets) {
     let conf = 70;
     const diff = Math.abs(b.temp - forecast);
-    if (diff === 0) conf = 85;
-    else if (diff === 1) conf = 75;
-    else conf = 65;
+    if (diff <= 0.5) conf = 85;
+    else if (diff <= 1.5) conf = 75;
+    else conf = 60;
     if (!agreement) conf -= 10;
-    let dir = b.temp <= forecast ? 'YES' : 'NO';
-    if (currentTemp !== null && currentTemp > b.temp) dir = 'YES';
-    const ev = computeEV(conf, dir === 'YES' ? b.yesPrice : b.noPrice);
-    if (ev > MIN_EV) trades.push({ bucket: b, confidence: conf, direction: dir, ev });
+    
+    const dir = b.temp <= forecast ? 'YES' : 'NO';
+    const price = dir === 'YES' ? b.yesPrice : b.noPrice;
+    const ev = computeEV(conf, price);
+    
+    if (ev > MIN_EV) {
+      trades.push({ bucket: b, confidence: conf, direction: dir, ev });
+    }
   }
   return trades;
 }
 
-async function executeLadder(city, slug, trades) {
+async function executeLadder(city, trades) {
   if (!trades.length) return;
   const per = TRADE_AMOUNT_USD / trades.length;
   let summary = `🏆 Ladder for ${city.name}\n`;
@@ -164,7 +281,7 @@ async function executeLadder(city, slug, trades) {
     const shares = Math.floor(per / price);
     const cost = shares * price;
     summary += `${t.direction} ${t.bucket.temp}°C @ ${(price*100).toFixed(1)}c | ${shares} shares = $${cost.toFixed(2)} | EV: ${(t.ev*100).toFixed(1)}%\n`;
-    console.log(`   [DRY RUN] would buy ${t.direction} ${t.bucket.temp}°C`);
+    console.log(`   [DRY RUN] would buy ${t.direction} ${t.bucket.temp}°C @ ${(price*100).toFixed(1)}c`);
   }
   await sendDiscord(summary);
 }
@@ -179,15 +296,13 @@ async function scanCity(city) {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const buckets = await fetchBuckets(city.name, tomorrow);
-  if (!buckets) return;
+  if (!buckets || buckets.length === 0) return;
   console.log(`   Ensemble: ${weather.maxC.toFixed(1)}°C | Agreement: ${weather.agreement} | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
   const trades = buildLadder(weather.maxC, buckets, weather.agreement, currentTemp);
   if (!trades.length) return;
-  const slug = getSlug(city.name, tomorrow);
-  await executeLadder(city, slug, trades);
+  await executeLadder(city, trades);
   stats.trades += trades.length;
   stats.cost += TRADE_AMOUNT_USD;
-  stats.potential += trades.reduce((acc, t) => acc + (t.direction === 'YES' ? (1-t.bucket.yesPrice) : t.bucket.noPrice) * (TRADE_AMOUNT_USD / trades.length), 0);
 }
 
 async function scan() {
@@ -202,14 +317,14 @@ async function scan() {
 
 function printStats() {
   const mins = Math.floor((Date.now() - stats.start) / 60000);
-  console.log(`\n📊 Stats | ${mins} min | Trades: ${stats.trades} | At risk: $${stats.cost.toFixed(2)} | Est profit: $${stats.potential.toFixed(2)}`);
+  console.log(`\n📊 Stats | ${mins} min | Trades: ${stats.trades} | At risk: $${stats.cost.toFixed(2)}`);
 }
 
 const CITIES = [
-  { name: 'Seoul', lat: 37.57, lon: 126.98 },
+  { name: 'Seoul', lat: 37.46, lon: 126.44 },
   { name: 'Singapore', lat: 1.29, lon: 103.85 },
   { name: 'Tokyo', lat: 35.68, lon: 139.69 },
-  { name: 'Shanghai', lat: 31.23, lon: 121.47 },
+  { name: 'Shanghai', lat: 31.14, lon: 121.80 },
   { name: 'Hong Kong', lat: 22.32, lon: 114.17 },
   { name: 'Taipei', lat: 25.03, lon: 121.56 },
   { name: 'Lucknow', lat: 26.85, lon: 80.95 },
@@ -233,9 +348,9 @@ const CITIES = [
 ];
 
 async function main() {
-  console.log('🚀 Elite Bot – DexScreener Primary + Gamma Fallback + Hardcoded');
-  console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
-  await sendDiscord('🤖 Bot started – DexScreener primary for real-time prices.');
+  console.log('🚀 Elite Bot – CLOB API + Fallback');
+  console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD}`);
+  await sendDiscord('🤖 Bot started – Scanning for mispriced weather markets.');
   while (true) {
     await scan();
     printStats();
