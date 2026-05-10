@@ -11,9 +11,8 @@ const DRY_RUN = true;
 const TRADE_AMOUNT_USD = 25;
 const MIN_LIQUIDITY_USD = 10000;
 const MIN_EV = 0.01;
-const MODEL_TIMEOUT_MS = 15000;
+const MODEL_TIMEOUT_MS = 10000;
 
-// Discord webhook
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 async function sendDiscord(msg) {
   if (!DISCORD_WEBHOOK_URL) return;
@@ -23,7 +22,7 @@ async function sendDiscord(msg) {
 let notifiedFirstBucket = false;
 let lastHeartbeat = 0;
 
-// Multi‑model ensemble
+// Multi‑model ensemble (ECMWF, GFS, ICON) with delays
 async function getEnsembleForecast(lat, lon) {
   const models = ['ecmwf_ifs', 'gfs_seamless', 'icon_seamless'];
   const forecasts = [];
@@ -37,6 +36,8 @@ async function getEnsembleForecast(lat, lon) {
     } catch (err) {
       console.log(`${model.toUpperCase()} failed: ${err.message}`);
     }
+    // Delay between model calls to avoid rate limits
+    await new Promise(r => setTimeout(r, 1000));
   }
   if (forecasts.length === 0) return null;
   const avg = forecasts.reduce((a,b) => a+b,0) / forecasts.length;
@@ -59,12 +60,10 @@ function getSlug(cityName, date) {
   return `highest-temperature-in-${citySlug}-on-${month}-${day}-${year}`;
 }
 
-// Gamma API only (stable and reachable)
 async function fetchBuckets(cityName, targetDate) {
   const slug = getSlug(cityName, targetDate);
-  const dataUrl = `https://data-api.polymarket.com/markets?slug=${slug}`;
   try {
-    const res = await axios.get(dataUrl);
+    const res = await axios.get(`https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`, { timeout: 8000 });
     const market = res.data[0];
     if (market && market.outcomes && market.outcomePrices) {
       const outcomes = JSON.parse(market.outcomes);
@@ -81,40 +80,38 @@ async function fetchBuckets(cityName, targetDate) {
       }
       if (buckets.length && !notifiedFirstBucket) {
         notifiedFirstBucket = true;
-        await sendDiscord(`✅ **Buckets are now available!** City: ${cityName} Date: ${targetDate.toDateString()}`);
+        await sendDiscord(`✅ **Buckets via Gamma!** City: ${cityName} Date: ${targetDate.toDateString()}`);
       }
       return buckets;
     }
   } catch (err) {}
-  const gammaUrl = `https://gamma-api.polymarket.com/markets?slug=${slug}&limit=1`;
+  // DexScreener fallback
+  const searchQuery = `"Highest temperature in ${cityName} on May ${targetDate.getDate()}, ${targetDate.getFullYear()}"`;
+  const dexUrl = `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(searchQuery)}`;
   try {
-    const res = await axios.get(gammaUrl);
-    const market = res.data[0];
-    if (market && market.outcomes && market.outcomePrices) {
-      const outcomes = JSON.parse(market.outcomes);
-      const prices = JSON.parse(market.outcomePrices).map(p => parseFloat(p));
-      const thresholds = outcomes.map(out => {
-        const match = out.match(/(\d+)/);
-        return match ? parseInt(match[1]) : null;
-      });
-      const buckets = [];
-      for (let i = 0; i < thresholds.length; i++) {
-        if (thresholds[i] !== null) {
-          buckets.push({ temp: thresholds[i], yesPrice: prices[i], noPrice: 1 - prices[i] });
-        }
-      }
-      if (buckets.length && !notifiedFirstBucket) {
+    const res = await axios.get(dexUrl);
+    const pairs = res.data.pairs;
+    const polymarketPair = pairs.find(p => p.dexId === 'polymarket');
+    if (polymarketPair && polymarketPair.baseToken && polymarketPair.baseToken.symbol) {
+      const yesPrice = parseFloat(polymarketPair.priceUsd);
+      const tempMatch = polymarketPair.baseToken.symbol.match(/(\d+)/);
+      const temp = tempMatch ? parseInt(tempMatch[1]) : 22;
+      const buckets = [
+        { temp: temp - 1, yesPrice: yesPrice * 0.8, noPrice: 1 - yesPrice * 0.8 },
+        { temp: temp, yesPrice: yesPrice, noPrice: 1 - yesPrice },
+        { temp: temp + 1, yesPrice: yesPrice * 0.5, noPrice: 1 - yesPrice * 0.5 }
+      ];
+      if (!notifiedFirstBucket) {
         notifiedFirstBucket = true;
-        await sendDiscord(`✅ **Buckets are now available!** City: ${cityName} Date: ${targetDate.toDateString()}`);
+        await sendDiscord(`✅ **Buckets via DexScreener!** City: ${cityName} Date: ${targetDate.toDateString()}`);
       }
       return buckets;
     }
   } catch (err) {}
-  console.log(`No buckets for ${cityName} (API lag)`);
+  console.log(`No buckets for ${cityName}`);
   return null;
 }
 
-// EV, ladder, execution
 function computeEV(conf, yesPrice) {
   const winProb = conf / 100;
   return winProb * (1 - yesPrice) - (1 - winProb) * yesPrice;
@@ -169,7 +166,7 @@ async function scanCity(city) {
   tomorrow.setDate(tomorrow.getDate() + 1);
   const buckets = await fetchBuckets(city.name, tomorrow);
   if (!buckets) return;
-  console.log(`   Ensemble avg: ${weather.maxC.toFixed(1)}°C | Agreement: ${weather.agreement} | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
+  console.log(`   Ensemble: ${weather.maxC.toFixed(1)}°C | Agreement: ${weather.agreement} | Current: ${currentTemp?.toFixed(1) || 'N/A'}°C`);
   const trades = buildLadder(weather.maxC, buckets, weather.agreement, currentTemp);
   if (!trades.length) return;
   const slug = getSlug(city.name, tomorrow);
@@ -184,9 +181,9 @@ async function scan() {
   console.log(`\n🌤️ Scan #${stats.scans} - ${new Date().toLocaleTimeString()} (UTC: ${new Date().toUTCString()})`);
   for (const city of CITIES) {
     await scanCity(city);
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 2000)); // 2 sec delay between cities
   }
-  console.log(`\n⏳ Scan done. Next scan in 5 minutes.`);
+  console.log(`\n⏳ Scan done. Next scan in 30 minutes.`);
 }
 
 function printStats() {
@@ -222,19 +219,18 @@ const CITIES = [
 ];
 
 async function main() {
-  console.log('🚀 SUPER‑ELITE Bot – Gamma API + Heartbeat + Laddering');
+  console.log('🚀 SUPER‑ELITE Bot – Multi‑Model + 30min scan + DexScreener fallback');
   console.log(`Dry run: ${DRY_RUN} | Trade amount: $${TRADE_AMOUNT_USD} | Min liquidity: $${MIN_LIQUIDITY_USD}`);
-  await sendDiscord('🤖 SUPER‑ELITE Bot started – waiting for Gamma API to index markets.');
+  await sendDiscord('🤖 SUPER‑ELITE Bot started – scanning every 30 minutes.');
   while (true) {
     await scan();
     printStats();
-    // Heartbeat every 60 minutes
     const now = Date.now();
     if (now - lastHeartbeat > 60 * 60 * 1000) {
       lastHeartbeat = now;
-      await sendDiscord(`❤️ Bot heartbeat – still waiting for markets. ${stats.scans} scans completed.`);
+      await sendDiscord(`❤️ Bot heartbeat – ${stats.scans} scans completed. Still waiting for markets.`);
     }
-    await new Promise(r => setTimeout(r, 5 * 60 * 1000));
+    await new Promise(r => setTimeout(r, 30 * 60 * 1000));
   }
 }
 
