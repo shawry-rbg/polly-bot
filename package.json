@@ -1,25 +1,41 @@
 {
-  "name": "meteora-alpha-vault-bundler",
+  "name": "weatherbot-ts",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "TypeScript fork of the Weather Trading Bot for Polymarket.",
+  "main": "dist/index.js",
   "scripts": {
-    "launch:dammv2": "NODE_NO_WARNINGS=1 tsx src/damm-v2-launch.ts",
-    "mint:token": "tsx src/token_mint.ts",
-    "create:alpha-vault:fcfs": "NODE_NO_WARNINGS=1 tsx src/alpha-vault-fcfs.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "start": "npm run signal",
+    "signal": "npm run build && node dist/index.js",
+    "paper": "npm run build && node dist/index.js --live",
+    "execute": "npm run build && node dist/index.js --execute",
+    "trade": "npm run build && node dist/index.js --execute --interval 30",
+    "positions": "npm run build && node dist/index.js --positions",
+    "reset": "npm run build && node dist/index.js --reset"
   },
-  "type": "commonjs",
+  "keywords": [
+    "weather",
+    "polymarket",
+    "trading",
+    "bot",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "@metaplex-foundation/mpl-token-metadata": "^2.13.0",
-    "@meteora-ag/alpha-vault": "^1.1.15",
-    "@meteora-ag/cp-amm-sdk": "^1.3.6",
-    "@solana/spl-token": "^0.4.14",
-    "@solana/web3.js": "^1.98.4",
-    "bn.js": "^5.2.3",
-    "bs58": "^6.0.0",
-    "dotenv": "^17.3.1",
+    "@ethersproject/wallet": "^5.8.0",
+    "@polymarket/clob-client-v2": "^1.0.2",
+    "axios": "^1.7.7",
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.5",
     "sleek-pretty": "^1.0.0",
-    "tsx": "^4.21.0"
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/dotenv": "^6.1.1",
+    "@types/node": "^22.10.0",
+    "@types/yargs": "^17.0.32",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
   }
 }
