@@ -26,7 +26,8 @@ export const LOCATIONS: Record<string, LocationConfig> = {
   // London market resolves on London City Airport (EGLC) readings.
   london: { lat: 51.5053, lon: 0.0552, name: "London", tempUnit: "C", provider: "open-meteo" },
   // Hong Kong market resolves on Hong Kong Observatory (HKO) readings.
-  "hong-kong": { lat: 22.3022, lon: 114.1744, name: "Hong Kong", tempUnit: "C", provider: "open-meteo" }
+  "hong-kong": { lat: 22.3022, lon: 114.1744, name: "Hong Kong", tempUnit: "C", provider: "open-meteo" },
+ chongqing: { lat: 29.4316, lon: 106.9123, name: "Chongqing", tempUnit: "C", provider: "open-meteo" }
 };
 
 export const NWS_ENDPOINTS: Record<string, string> = {
