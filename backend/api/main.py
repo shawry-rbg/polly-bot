@@ -25,6 +25,16 @@ app = FastAPI(
     version="3.0.0"
 )
 
+import asyncio
+
+@app.on_event("startup")
+async def start_keep_alive():
+    asyncio.create_task(keep_alive())
+
+async def keep_alive():
+    while True:
+        await asyncio.sleep(60)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
