@@ -8,3 +8,4 @@ pydantic
 python-dotenv
 numpy
 pandas
+pydantic-settings
