@@ -5,7 +5,8 @@ alembic
 psycopg2-binary
 httpx
 pydantic
+pydantic-settings
 python-dotenv
 numpy
 pandas
-pydantic-settings
+apscheduler
