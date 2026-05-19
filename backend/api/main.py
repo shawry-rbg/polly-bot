@@ -2,6 +2,7 @@
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime, timedelta
 from typing import List, Optional
 import asyncio
@@ -1059,4 +1060,55 @@ if __name__ == "__main__":
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+# ========== DASHBOARD API ENDPOINTS ==========
+
+@app.get("/api/stats")
+async def get_stats():
+    db = SessionLocal()
+    try:
+        state = db.query(BotState).order_by(BotState.id.desc()).first()
+        total_trades = db.query(Trade).count()
+        winning_trades = db.query(Trade).filter(Trade.outcome == "WIN").count()
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+        total_profit = db.query(func.sum(Trade.profit)).scalar() or 0
+        return {
+            "bankroll": round(state.bankroll, 2) if state else 10000.00,
+            "total_profit": round(total_profit, 2),
+            "total_trades": total_trades,
+            "winning_trades": winning_trades,
+            "win_rate": round(win_rate, 2),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    finally:
+        db.close()
+
+@app.get("/api/trades")
+async def get_trades(limit: int = 50):
+    db = SessionLocal()
+    try:
+        trades = db.query(Trade).order_by(Trade.id.desc()).limit(limit).all()
+        return [
+            {
+                "id": t.id,
+                "market": t.market_slug,
+                "direction": t.direction,
+                "size": round(t.size, 2),
+                "price": round(t.price, 4),
+                "outcome": t.outcome,
+                "profit": round(t.profit, 2) if t.profit else 0,
+                "timestamp": t.created_at.isoformat() if t.created_at else None
+            }
+            for t in trades
+        ]
+    finally:
+        db.close()
+
+@app.get("/api/balance")
+async def get_balance():
+    db = SessionLocal()
+    try:
+        state = db.query(BotState).order_by(BotState.id.desc()).first()
+        return {"bankroll": round(state.bankroll, 2) if state else 10000.00}
+    finally:
+        db.close()
 
